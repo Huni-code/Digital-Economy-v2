@@ -86,17 +86,27 @@ universe, and applies a documented Digital Economy inclusion filter.
 **Goal:** Produce the raw candidate list of every U.S. public company
 plausibly in the Digital Economy. Cast wide; filter in Phase 2.
 
-### 1A — Broad index holdings
+### 1A — Broad index holdings ✓
 
-- [ ] Download iShares **IWV** (Russell 3000) holdings CSV
-- [ ] Download iShares **IJH** (S&P 400 Mid-Cap) holdings CSV
-- [ ] Download iShares **IJR** (S&P 600 Small-Cap) holdings CSV
-- [ ] Save each to `data/universe/{etf}_holdings_<YYYYMMDD>.csv`
-- [ ] Parse into normalized table: ticker, name, gics_sector, mcap_usd,
-      source_index
-- Note: IJH/IJR overlap heavily with IWV (~95%); net new ~50-100 names
-  expected (S&P uses earnings filter, Russell uses float — small
-  divergences).
+- [x] Download iShares **IWV** (Russell 3000) holdings CSV — 2,573 rows
+- [x] Download iShares **IJH** (S&P 400 Mid-Cap) holdings CSV — 403 rows
+- [x] Download iShares **IJR** (S&P 600 Small-Cap) holdings CSV — 638 rows
+- [x] Save each to `data/universe/{etf}_holdings_<YYYYMMDD>.csv` (gitignored)
+- [x] Parse into normalized table: ticker, name, sector_ishares,
+      etf_market_value_usd, weight_pct, source_index, data_as_of
+- ⚠ `etf_market_value_usd` is iShares' position size (= ETF AUM ×
+  weight%), NOT the company's market cap. True company-level
+  `market_cap_usd` is fetched in Phase 2A via yfinance. Naming this
+  field honestly avoids a class of "why is Apple's mcap $1B?" bugs.
+- Result: 3,614 long-format rows / 2,579 distinct tickers. IJH/IJR
+  contributed only ~6 unique tickers on top of IWV — the Russell-vs-S&P
+  methodology overlap is tighter in practice than methodology
+  documentation suggests.
+- Output: `data/universe/broad_indices_combined.csv` (committed).
+- Script: `pipeline/p1a_broad_indices.py`. Handles two iShares CSV
+  schema variants (IWV: Ticker,Name,Sector,...; IJH/IJR: Ticker,Name,
+  Type,Sector,... with "Market Weight" instead of "Weight (%)") via
+  permissive header detection and weight-column matching.
 
 ### 1B — ETF supplement holdings
 
@@ -141,9 +151,11 @@ date stamped in `source_indices` field.
 - [ ] Drop rows missing CIK (likely OTC, ADR with non-standard ticker,
       newly-listed not yet in SEC ticker map)
 - [ ] Output: `data/universe/raw_universe.csv` — expected ~3,500-4,000
-- [ ] Columns: cik, ticker, name, gics_sector, mcap_usd, source_indices
-      (semicolon-joined, e.g., `"Russell3000;S&P600;IGV;WCLD"`),
-      `requires_review` (0/1)
+- [ ] Columns: cik, ticker, name, sector_ishares, source_indices
+      (semicolon-joined, e.g., `"IWV;IJR;IGV;WCLD"`),
+      `requires_review` (0/1), data_as_of_min, data_as_of_max
+- [ ] Real `market_cap_usd` is added in Phase 2A from yfinance — kept
+      out of 1D so the universe file stays clearly source-attributed.
 - [ ] **ARKK-only flag:** any company whose `source_indices` contains
       `"ARKK"` AND no broad index (IWV/IJH/IJR) AND no other thematic ETF
       → set `requires_review = 1`. Rationale: ARKK is actively managed
