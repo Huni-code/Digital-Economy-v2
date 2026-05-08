@@ -59,22 +59,23 @@ universe, and applies a documented Digital Economy inclusion filter.
 - [x] `git init` (done)
 - [x] `.gitignore` — covers caches, raw downloads, secrets; allows
       committed derived outputs
-- [ ] `README.md` with one-paragraph project summary
-- [ ] `requirements.txt` (requests, pandas, sqlite3, plotly, streamlit,
-      yfinance, openpyxl)
-- [ ] Folder layout:
+- [x] `README.md` with hook + methodology summary + install/run + status
+- [x] `requirements.txt` (requests, pandas, plotly, streamlit, yfinance,
+      openpyxl; sqlite3 omitted — stdlib)
+- [x] Folder layout:
   ```
   digital-economy-v2/
-    pipeline/         # phase scripts
+    pipeline/         # phase scripts (p1_* … p9_*)
     data/             # universe CSVs, DB, caches
-      cache/          # API response caches (gitignore'd if large)
-      universe/       # ETF holdings, raw lists
+      cache/          # API response caches (gitignore'd)
+      universe/       # ETF holdings (gitignore'd) + derived universe
     notebooks/        # exploration / sanity checks
     dashboard/        # Streamlit app
-    docs/             # methodology, decision log
+    docs/             # methodology, decision log, xbrl_tags, metrics
     PHASES.md         # this file
   ```
-- [ ] `docs/decisions.md` — log every Pre-Phase decision with rationale
+  Each subfolder has a one-line `README.md`.
+- [x] `docs/decisions.md` — log every Pre-Phase decision with rationale
 
 **Estimate:** 30 min.
 
