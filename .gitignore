@@ -1,0 +1,55 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.python-version
+
+# Env / secrets
+.env
+.env.local
+*.key
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Claude Code workspace metadata
+.claude/
+
+# === Project data hygiene ===
+
+# API response caches — can balloon to GB. Cacheable from source, not committed.
+data/cache/
+
+# Raw timestamped ETF / index downloads — re-derivable on demand.
+# Pattern matches: iwv_holdings_20260507.csv, arkk_holdings_20260507.csv, etc.
+data/universe/*_holdings_*.csv
+
+# SQLite journal / WAL — never commit
+data/*.db-journal
+data/*.db-wal
+data/*.db-shm
+
+# Per-run debug dumps
+data/debug_*
+
+# === Intentionally tracked (allow-list overrides) ===
+
+# Derived universe outputs — committed because re-derivation is expensive
+# (manual review work). Listed here as documentation, no rule needed.
+#   data/universe/raw_universe.csv
+#   data/universe/digital_economy_universe.csv
+#   data/universe/borderline_review.csv
+#   data/universe/manual_subsector_overrides.csv
+#   data/universe/sic_to_subsector.csv
+#   data/universe/gics_to_subsector.csv
+
+# Final DB and final score CSVs — committed
+#   data/companies.db
+#   data/coverage_report.csv
+
+# Streamlit cache
+.streamlit/secrets.toml

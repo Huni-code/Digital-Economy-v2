@@ -12,36 +12,43 @@ universe, and applies a documented Digital Economy inclusion filter.
 
 ---
 
-## Pre-Phase Decisions (resolve before Phase 0)
+## Pre-Phase Decisions
 
-These choices propagate through every later phase. Lock them in writing.
+### LOCKED
 
-1. **Digital Economy definition** — finalize the 3-condition inclusion rule:
+1. **Digital Economy definition — LOCKED: Any-1-of-3 inclusion rule.**
    - GICS Sector ∈ {Information Technology, Communication Services subset,
      Internet Retail (Cons. Disc.)}
    - OR R&D/Revenue > 5% (TTM)
    - OR 10-K Item 1 contains ≥2 of {"technology", "platform", "software",
      "digital", "data", "internet", "cloud", "AI"}
-   - **Open: minimum 2-of-3 vs any-1-of-3?** (controls universe size)
+   - Each company stores `inclusion_reason` (semicolon-joined matched
+     conditions, e.g., "gics;rd_ratio") for downstream review.
+   - Rationale: v1 suffered from undersized Tier 2 buckets. Cast wide,
+     narrow later via borderline review (Phase 2D).
 
-2. **Sub-sector taxonomy** — Tier 1 (~6 broad) vs Tier 2 (~18 sub).
+5. **ADR handling — LOCKED: No explicit ADR exclusion at universe stage.**
+   Foreign ADRs auto-filter in Phase 4 when SEC XBRL Company Facts API
+   returns no data. Rationale: avoid premature exclusion; let data
+   availability decide.
+
+### DEFERRED (decide at the relevant phase kickoff)
+
+2. **Sub-sector taxonomy** — defer to Phase 3 kickoff.
    - Tier 1 candidates: Software & Cloud / Hardware & Semiconductors /
      Internet & Digital Services / Fintech / Communication & Media /
      Tech-enabled Services
-   - Tier 2: refined within each Tier 1, target n≥10 per bucket
-   - **Open: keep v1's 18 sub-sectors or redesign?**
+   - Tier 2: refined within each Tier 1, target n≥10 per bucket.
 
-3. **CAGR window** — keep 2020→2024 (4-year) from v1, or shift to 2021→2025?
+3. **CAGR window** — defer to Phase 5 (after enrichment shows actual
+   year-coverage of the universe). Default candidate: 2020→2024 (v1).
 
-4. **Score weights** — keep v1's Learning 40 / Inventing 30 / Investing 30,
-   or redesign? Within Investing keep CAGR 40 / SFR 30 / Margin 30?
+4. **Score weights** — defer to Phase 6, after seeing metric distributions.
+   Default candidate: v1's Learning 40 / Inventing 30 / Investing 30 with
+   Investing = CAGR 40 / SFR 30 / Margin 30.
 
-5. **ADR exclusion** — confirm "U.S. companies" excludes foreign ADRs
-   (Spotify, ASML, Sony). Russell 3000 is U.S.-only by construction; ETF
-   supplement may include some.
-
-6. **Market cap floor** — exclude micro-caps under $50M? Russell 3000's
-   bottom decile is ~$200M so usually moot.
+6. **Market cap floor** — defer; likely moot given Russell 3000's natural
+   ~$200M floor.
 
 ---
 
@@ -49,11 +56,12 @@ These choices propagate through every later phase. Lock them in writing.
 
 **Goal:** Repo, env, doc skeleton.
 
-- [ ] `git init` (done)
+- [x] `git init` (done)
+- [x] `.gitignore` — covers caches, raw downloads, secrets; allows
+      committed derived outputs
 - [ ] `README.md` with one-paragraph project summary
 - [ ] `requirements.txt` (requests, pandas, sqlite3, plotly, streamlit,
       yfinance, openpyxl)
-- [ ] `.gitignore` (.venv, __pycache__, data/cache/*, .env)
 - [ ] Folder layout:
   ```
   digital-economy-v2/
@@ -77,13 +85,17 @@ These choices propagate through every later phase. Lock them in writing.
 **Goal:** Produce the raw candidate list of every U.S. public company
 plausibly in the Digital Economy. Cast wide; filter in Phase 2.
 
-### 1A — Russell 3000 holdings
+### 1A — Broad index holdings
 
-- [ ] Download iShares IWV holdings CSV (free, monthly refresh)
-  - URL: `https://www.ishares.com/us/products/239714/ishares-russell-3000-etf`
-  - Columns kept: Ticker, Name, Sector, Market Value, Weight
-- [ ] Save to `data/universe/iwv_holdings_<YYYYMMDD>.csv`
-- [ ] Parse into normalized table: ticker, name, gics_sector, mcap_usd
+- [ ] Download iShares **IWV** (Russell 3000) holdings CSV
+- [ ] Download iShares **IJH** (S&P 400 Mid-Cap) holdings CSV
+- [ ] Download iShares **IJR** (S&P 600 Small-Cap) holdings CSV
+- [ ] Save each to `data/universe/{etf}_holdings_<YYYYMMDD>.csv`
+- [ ] Parse into normalized table: ticker, name, gics_sector, mcap_usd,
+      source_index
+- Note: IJH/IJR overlap heavily with IWV (~95%); net new ~50-100 names
+  expected (S&P uses earnings filter, Russell uses float — small
+  divergences).
 
 ### 1B — ETF supplement holdings
 
@@ -97,14 +109,21 @@ sector tags miss (Fintech, Cloud, Cybersecurity, Gaming):
 | IGV | iShares Software | iShares | ishares.com |
 | SOXX | Semiconductor | iShares | ishares.com |
 | WCLD | Cloud Computing | WisdomTree | wisdomtree.com |
+| SKYY | First Trust Cloud | First Trust | ftportfolios.com |
 | HACK | Cybersecurity | ETFMG | etfmg.com |
 | FINX | Fintech | Global X | globalxetfs.com |
 | IBUY | Online Retail | Amplify | amplifyetfs.com |
 | SOCL | Social Media | Global X | globalxetfs.com |
 | GAMR | Video Games | Wedbush ETFMG | etfmg.com |
 | BOTZ | Robotics & AI | Global X | globalxetfs.com |
+| ARKK | ARK Innovation | ARK | ark-funds.com |
 
-- [ ] Script `pipeline/p1b_etf_holdings.py` — download all 11, parse to
+13 thematic ETFs (was 11). Excluded: QQQ (subset of mega-cap, redundant),
+PAVE/IFRA (infrastructure, not tech). ARKK is **actively managed** —
+universe membership drifts ~30% / year as the manager rebalances. Capture
+date stamped in `source_indices` field.
+
+- [ ] Script `pipeline/p1b_etf_holdings.py` — download all 13, parse to
       single combined CSV with `source_etf` column.
 - [ ] Save to `data/universe/etf_holdings_combined.csv`.
 
@@ -116,15 +135,23 @@ sector tags miss (Fintech, Cloud, Cybersecurity, Gaming):
 
 ### 1D — Union + dedup
 
-- [ ] Merge IWV + ETF holdings on ticker
+- [ ] Merge all 16 sources on ticker (3 broad + 13 thematic)
 - [ ] Left-join CIK from 1C
-- [ ] Drop rows missing CIK (likely OTC, ADR with non-standard ticker)
-- [ ] Output: `data/universe/raw_universe.csv` — ~3,000-3,200 companies
+- [ ] Drop rows missing CIK (likely OTC, ADR with non-standard ticker,
+      newly-listed not yet in SEC ticker map)
+- [ ] Output: `data/universe/raw_universe.csv` — expected ~3,500-4,000
 - [ ] Columns: cik, ticker, name, gics_sector, mcap_usd, source_indices
-      (semicolon-joined: "Russell3000;IGV;WCLD")
+      (semicolon-joined, e.g., `"Russell3000;S&P600;IGV;WCLD"`),
+      `requires_review` (0/1)
+- [ ] **ARKK-only flag:** any company whose `source_indices` contains
+      `"ARKK"` AND no broad index (IWV/IJH/IJR) AND no other thematic ETF
+      → set `requires_review = 1`. Rationale: ARKK is actively managed
+      and includes off-thesis names (Tesla, medical devices). These rows
+      flow into Phase 2D borderline review automatically.
 
-**Deliverable:** `raw_universe.csv` with ~3,000 candidates.
-**Estimate:** 1 day.
+**Deliverable:** `raw_universe.csv` with ~3,500-4,000 candidates.
+**Estimate:** 1.5 days (per-issuer ETF formats differ; ARKK / WisdomTree /
+Global X may need light scraping).
 
 ---
 
@@ -159,8 +186,11 @@ Apply the locked rule (see Pre-Phase Decision 1). Each company gets
 
 ### 2D — Borderline manual review
 
-- [ ] Generate `data/universe/borderline_review.csv` for cases where exactly
-      one condition matched, or where R&D ratio is between 4-6%.
+- [ ] Generate `data/universe/borderline_review.csv` covering:
+      - cases where exactly one of the 3 inclusion conditions matched
+      - cases where R&D ratio is between 4-6%
+      - **all rows with `requires_review = 1`** (ARKK-only inclusions
+        from Phase 1D)
 - [ ] User reviews, marks `manual_decision` column with include/exclude.
 - [ ] Apply manual decisions back to universe.
 
@@ -186,24 +216,32 @@ Tier 2 sub-sector. Goal: every Tier 2 has n≥10 (statistical floor).
 - [ ] Most GICS sub-industries map 1:1; some (e.g., "Application Software")
       need split — handled in 3C.
 
-### 3C — LLM-assisted split for ambiguous GICS buckets
+### 3C — SIC-based split for oversized GICS buckets
 
-For oversized GICS buckets (Application Software ~80 companies in one
-bucket), use Claude API to classify each company by 10-K Item 1 + product
-description into our finer Tier 2.
+For GICS sub-industries containing >40 companies (Application Software,
+Semiconductors, Interactive Media & Services, Data Processing & Outsourced
+Services, Systems Software):
 
-- [ ] `pipeline/p3c_llm_classify.py` — fetch 10-K Item 1 (first 1000 tokens),
-      send to Claude, get JSON {tier1, tier2, confidence}
-- [ ] Cost estimate: 80 companies × $0.01/call = $1
-- [ ] Cache responses to `data/cache/llm_classifications.json`
+- [ ] Build secondary mapping using SIC codes already fetched in Phase 2A.
+- [ ] Example: GICS "Application Software" splits via SIC into:
+      - SIC 7372 (Prepackaged Software) → tier2: "Vertical SaaS" or
+        "Horizontal SaaS" depending on product description
+      - SIC 7389 (Business Services NEC) → tier2: "Tech-enabled Services"
+- [ ] `data/universe/sic_to_subsector.csv` — manually curated mapping
+      table (SIC × parent_GICS → tier2).
+- [ ] No LLM use. Rule-based + manual curation only — auditable output.
 
 ### 3D — Manual override
 
-- [ ] `data/universe/manual_subsector_overrides.csv` — list of (cik,
-      tier1, tier2, reason) for cases where automation was wrong.
+- [ ] `data/universe/manual_subsector_overrides.csv` — (cik, tier1, tier2,
+      reason).
+- [ ] Expected manual review volume: 200-400 companies (cases where
+      GICS+SIC rules conflict, or company is multi-segment).
+- [ ] Workflow: filter raw classifications to "low_confidence" rows
+      (rules disagree), batch review in spreadsheet, re-import.
 
 **Deliverable:** Every CIK has tier1 + tier2 assigned.
-**Estimate:** 2 days.
+**Estimate:** 1.5 days (LLM debug overhead removed).
 
 ---
 
@@ -262,7 +300,8 @@ CREATE TABLE financials (
     deferred_revenue REAL,
     rpo REAL,
     -- Meta
-    source_tag_revenue TEXT,    -- which XBRL tag was used
+    source_tag_revenue TEXT,        -- which XBRL tag was used
+    fiscal_year_end_month INTEGER,  -- 1-12, e.g., 9=Apple, 6=MSFT
     PRIMARY KEY (cik, year)
 );
 ```
@@ -297,11 +336,17 @@ cash_and_equivalents:
 ### 4C — Fetch + extract
 
 - [ ] `pipeline/p4_enrich.py` — combine v1's `phase_f_ocf.py` and
-      `phase_f2_revenue_rd.py` patterns into one pass per CIK
+      `phase_f2_revenue_rd.py` patterns into one pass per CIK.
 - [ ] Reuse v1 caches where CIK overlaps (estimate: 200-300 CIKs hit the
-      v1 cache)
-- [ ] Filter: form='10-K', fp='FY'; pick latest `filed` per (cik, year)
-- [ ] Rate limit: 0.11s per CIK, 800 × 0.11 = ~90 seconds
+      v1 cache).
+- [ ] Filter: form='10-K', fp='FY'; pick latest `filed` per (cik, year).
+- [ ] **Fiscal year handling:** store XBRL `fy` field as-is. Do NOT
+      convert to calendar year. Document in `docs/xbrl_tags.md` that all
+      year columns are fiscal-year basis. Capture `fiscal_year_end_month`
+      from the company's reported period end.
+- [ ] **Restatement handling:** when multiple 10-Ks exist for the same
+      (cik, fy), pick the one with latest `filed` date.
+- [ ] Rate limit: 0.11s per CIK, 800 × 0.11 = ~90 seconds.
 
 ### 4D — Coverage report
 
@@ -458,17 +503,17 @@ revisit weights in light of richer metrics.
 
 | Phase | Days |
 |---|---|
-| 0  Setup | 0.1 |
-| 1  Universe | 1 |
+| 0  Setup | 0.5 |
+| 1  Universe | 1.5 |
 | 2  Filter | 2 |
-| 3  Taxonomy | 2 |
+| 3  Taxonomy | 1.5 |
 | 4  Enrich | 1 |
 | 5  Metrics | 0.5 |
 | 6  Score | 1 |
 | 7  Validate | 1 |
 | 8  Dashboard | 3 |
 | 9  Docs | 1 |
-| **Total** | **~12 days** |
+| **Total** | **~13 days** |
 
 Solo + part-time: ~3-4 calendar weeks. Cut Phase 8 to MVP (2 pages) if
 deadline pressure.
@@ -494,16 +539,12 @@ Drop everything else from v1.
 
 ## Open Questions / TBD
 
-1. ETF holdings download — is there a programmatic API or do we manually
-   download CSVs each time? iShares has direct CSV URLs; some others need
-   scraping.
-2. yfinance reliability for GICS — backup plan if it rate-limits.
-3. LLM classification cost ceiling — set hard $5 budget for Phase 3C?
-4. Versioning strategy — tag v2.0 at first dashboard demo, then v2.1+.
-5. Should the v1 repo stay as `Mapping-the-U.S.-Digital-Economy` and v2
-   be a fresh repo (this folder), or rename v1 to `-v1` and make v2
-   the canonical? Decision: keep v1 repo as-is for archive, push v2 to
-   a new GitHub repo.
+1. ETF holdings programmatic vs manual — most issuers expose direct CSV
+   URLs (iShares, SSGA, Vanguard); ARKK, WisdomTree, Global X may need
+   light scraping. Build per-issuer fetcher functions.
+2. yfinance reliability for GICS sub-industry — backup: OpenFIGI API.
+3. Versioning — tag v2.0 at first dashboard demo.
+4. Repo decision: keep v1 archived as-is, push v2 to fresh GitHub repo.
 
 ---
 
