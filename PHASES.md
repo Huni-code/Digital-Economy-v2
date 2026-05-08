@@ -281,18 +281,25 @@ CREATE TABLE financials (
     gross_profit REAL,
     rd_expense REAL,
     sga_expense REAL,
+    depreciation_amortization REAL,  -- D&A; needed for EBITDA
     operating_income REAL,
     interest_expense REAL,
     net_income REAL,
     -- Cash flow
     operating_cash_flow REAL,
     capex REAL,
-    free_cash_flow REAL,        -- derived
+    free_cash_flow REAL,             -- derived: OCF - CapEx
     sbc REAL,
+    stock_repurchase REAL,           -- buyback dollars; sign-normalized positive
     -- Balance sheet
     cash_and_equivalents REAL,
     short_term_investments REAL,
-    total_debt REAL,
+    current_assets REAL,             -- for current_ratio
+    current_liabilities REAL,        -- for current_ratio
+    ppe_net REAL,                    -- net PP&E for asset_turnover
+    long_term_debt REAL,             -- LT portion only; for net_debt
+    total_debt REAL,                 -- LT + ST
+    retained_earnings REAL,          -- accumulated profit/loss; zombie_flag input
     stockholders_equity REAL,
     shares_outstanding REAL,
     shares_outstanding_diluted REAL,
@@ -300,8 +307,15 @@ CREATE TABLE financials (
     deferred_revenue REAL,
     rpo REAL,
     -- Meta
-    source_tag_revenue TEXT,        -- which XBRL tag was used
-    fiscal_year_end_month INTEGER,  -- 1-12, e.g., 9=Apple, 6=MSFT
+    source_tag_revenue TEXT,         -- which XBRL tag was used
+    source_tag_da TEXT,              -- D&A tag actually used
+    source_tag_buyback TEXT,         -- repurchase tag actually used
+    source_tag_ltd TEXT,             -- long_term_debt tag actually used
+    source_tag_re TEXT,              -- retained_earnings tag actually used
+    source_tag_ppe TEXT,             -- ppe_net tag actually used
+    source_tag_ca TEXT,              -- current_assets tag actually used
+    source_tag_cl TEXT,              -- current_liabilities tag actually used
+    fiscal_year_end_month INTEGER,   -- 1-12, e.g., 9=Apple, 6=MSFT
     PRIMARY KEY (cik, year)
 );
 ```
@@ -331,6 +345,45 @@ sbc:
 cash_and_equivalents:
   1. us-gaap:CashAndCashEquivalentsAtCarryingValue
   2. us-gaap:CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents
+
+depreciation_amortization:
+  1. us-gaap:DepreciationDepletionAndAmortization
+  2. us-gaap:DepreciationAndAmortization
+  3. us-gaap:Depreciation + us-gaap:AmortizationOfIntangibleAssets (sum)
+
+stock_repurchase:
+  1. us-gaap:PaymentsForRepurchaseOfCommonStock
+  2. us-gaap:PaymentsForRepurchaseOfEquity
+  3. us-gaap:TreasuryStockValueAcquiredCostMethod (delta YoY)
+  Sign rule: SEC reports buybacks as positive cash outflow under
+  "investing/financing activities". Some filers use negative sign in
+  XBRL. Normalize to **positive** (always treat as outflow > 0).
+  Drop rows where the absolute value > 50% of revenue (likely tag misuse).
+
+long_term_debt:
+  1. us-gaap:LongTermDebtNoncurrent
+  2. us-gaap:LongTermDebt
+  3. us-gaap:LongTermDebtAndCapitalLeaseObligations
+
+retained_earnings:
+  1. us-gaap:RetainedEarningsAccumulatedDeficit
+  2. us-gaap:RetainedEarnings
+  NULL vs negative distinction: tag missing entirely → store NULL
+  (likely IFRS filer or recent IPO with no R/E line). Tag present with
+  negative value → store as-is (legitimate accumulated deficit, common
+  for loss-stage SaaS). zombie_flag downstream uses ratio
+  retained_earnings / |stockholders_equity|, so NULL bypasses the rule
+  while negative triggers evaluation.
+
+ppe_net:
+  1. us-gaap:PropertyPlantAndEquipmentNet
+  2. us-gaap:PropertyPlantAndEquipmentAndFinanceLeaseRightOfUseAssetAfterAccumulatedDepreciationAndAmortization
+
+current_assets:
+  1. us-gaap:AssetsCurrent
+
+current_liabilities:
+  1. us-gaap:LiabilitiesCurrent
 ```
 
 ### 4C — Fetch + extract
@@ -346,6 +399,22 @@ cash_and_equivalents:
       from the company's reported period end.
 - [ ] **Restatement handling:** when multiple 10-Ks exist for the same
       (cik, fy), pick the one with latest `filed` date.
+- [ ] **Source-tag tracking:** for every fallback-chain field, record
+      which tag actually produced the value. Schema columns:
+      `source_tag_revenue`, `source_tag_da`, `source_tag_buyback`,
+      `source_tag_ltd`, `source_tag_re`, `source_tag_ppe`,
+      `source_tag_ca`, `source_tag_cl`. Lets downstream debugging
+      identify tag-mix issues without re-fetching.
+- [ ] **Retained earnings handling:** distinguish three states —
+      tag absent → store NULL; tag present with positive value → as-is;
+      tag present with negative value (accumulated deficit) → as-is.
+      Do NOT clamp to 0. zombie_flag in Phase 5 depends on the negative
+      signal.
+- [ ] **Stock repurchase sign normalization:** XBRL filers split between
+      reporting buybacks as positive (outflow) and negative. Apply
+      `abs()` and store positive. Drop the row + log if `abs() > 0.5 *
+      revenue` for that year (almost certainly a tag misuse, e.g.,
+      total treasury stock balance instead of period delta).
 - [ ] Rate limit: 0.11s per CIK, 800 × 0.11 = ~90 seconds.
 
 ### 4D — Coverage report
@@ -355,7 +424,8 @@ cash_and_equivalents:
 - [ ] Flag (tier2, metric) cells with <50% coverage for review.
 
 **Deliverable:** `data/companies.db` populated.
-**Estimate:** 1 day.
+**Estimate:** 1.5 days (was 1d; added 7 fields × tag fallback chains +
+sign/NULL normalization rules).
 
 ---
 
@@ -365,17 +435,47 @@ cash_and_equivalents:
 
 - [ ] `pipeline/p5_derive_metrics.py` — adds rows to `metrics_per_company`
       table:
-  - **Margins:** gross_margin, op_margin, net_margin, fcf_margin
+  - **Margins:** gross_margin, op_margin, net_margin, fcf_margin,
+        **ebitda**, **ebitda_margin**
   - **Growth:** revenue_cagr (4yr), rd_cagr, op_income_cagr
-  - **Efficiency:** roic, roe, rd_intensity (RD/Rev), capex_intensity
-  - **Health:** debt_to_ebitda, interest_coverage, cash_runway_yrs
+  - **Efficiency:** roic, roe, rd_intensity (RD/Rev), capex_intensity,
+        **asset_turnover** (revenue / ppe_net)
+  - **Health:** debt_to_ebitda, interest_coverage, cash_runway_yrs,
+        **current_ratio** (current_assets / current_liabilities),
+        **net_debt** (long_term_debt − cash − short_term_investments)
+  - **Capital return:** **net_dilution** (Δ shares_outstanding YoY adj.
+        for buybacks), **buyback_yield** (stock_repurchase / market_cap)
   - **Tech-specific:** rule_of_40 (rev_growth + fcf_margin), sbc_dilution
         (SBC/MCap), magic_number (if data allows)
+  - **Distress:** **zombie_flag** (binary). BIS-style 4-condition AND.
+        Triggers when ALL of:
+        ```
+        retained_earnings < 0                # historical losses
+        AND avg(fcf, last 3 years) < 0       # sustained cash burn
+        AND interest_coverage < 1            # can't service debt
+        AND cash_runway_yrs < 2              # imminent failure
+        ```
+        NULL handling:
+        - Companies with < 3 years of FCF data (recent IPO) → flag = NULL,
+          NOT 0. zombie_flag is meaningless without burn-trajectory history.
+        - retained_earnings tag absent (IFRS filer, see 4B) → NULL.
+        - interest_coverage requires interest_expense > 0; if zero/NULL
+          (debt-free company), the condition is vacuously true OR the
+          rule short-circuits to "not a zombie" (debt-free can't be a
+          zombie by definition). Default: short-circuit to flag = 0.
+        Expected catch rate: ~4-6% of universe (30-50 of ~800).
 - [ ] Each metric has its own NULL handling rule documented in
-      `docs/metrics.md`
+      `docs/metrics.md`.
+- [ ] **SaaS current_ratio caveat:** SaaS firms with large deferred
+      revenue inflate current_liabilities and depress current_ratio
+      artificially. Document in `docs/metrics.md` whether to compute
+      an adjusted variant: `current_ratio_adj = current_assets /
+      (current_liabilities − deferred_revenue)`. Decision deferred to
+      Phase 5 kickoff after seeing the distribution.
 
 **Deliverable:** `metrics_per_company` table.
-**Estimate:** 0.5 day.
+**Estimate:** 1 day (was 0.5d; added 8 metrics + zombie_flag multi-year
+window logic + SaaS current_ratio adjustment review).
 
 ---
 
@@ -391,6 +491,18 @@ revisit weights in light of richer metrics.
 - [ ] `docs/scoring.md` — final weight diagram with rationale.
 - [ ] Per-layer: list of (metric, normalization, weight).
 - [ ] 5-95th percentile clipping retained from v1.
+- [ ] **D4 placement review (v2 new metrics):** decide where each of the
+      Phase 5 v2 additions sits in the score architecture. Candidates:
+      - ebitda_margin → Investing (profitability quality)
+      - asset_turnover → Investing or Inventing (capital efficiency)
+      - current_ratio → Health gate, not in score (binary pass/fail)
+      - net_debt → debt_to_ebitda already covers; possibly skip
+      - net_dilution → Investing (penalizes SBC abusers)
+      - buyback_yield → Investing (capital return signal)
+- [ ] **zombie_flag = hard exclusion.** Companies with zombie_flag = 1
+      are excluded from scoring entirely (no score, dashboard tags as
+      "distressed — see metrics tab"). Document threshold + override
+      list in `docs/scoring.md`.
 
 ### 6B — Per-company score
 
@@ -507,13 +619,13 @@ revisit weights in light of richer metrics.
 | 1  Universe | 1.5 |
 | 2  Filter | 2 |
 | 3  Taxonomy | 1.5 |
-| 4  Enrich | 1 |
-| 5  Metrics | 0.5 |
+| 4  Enrich | 1.5 |
+| 5  Metrics | 1 |
 | 6  Score | 1 |
 | 7  Validate | 1 |
 | 8  Dashboard | 3 |
 | 9  Docs | 1 |
-| **Total** | **~13 days** |
+| **Total** | **~14 days** |
 
 Solo + part-time: ~3-4 calendar weeks. Cut Phase 8 to MVP (2 pages) if
 deadline pressure.

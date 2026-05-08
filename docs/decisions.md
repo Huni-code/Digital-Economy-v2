@@ -26,6 +26,64 @@
 - Reversal cost: medium — would require re-running Phase 3, but
   rule-based output is preserved.
 
+### D-Metrics — Expanded financial schema (+7 raw, +8 derived)
+- Date: 2026-04-30
+- Rule: Phase 4 schema gains 7 raw fields and Phase 5 gains 8 derived
+  metrics, listed below.
+- Raw additions (Phase 4):
+  - `depreciation_amortization` — input to EBITDA
+  - `stock_repurchase` — capital return; sign-normalized to positive
+  - `long_term_debt` — separate from total_debt for net_debt calc
+  - `retained_earnings` — distress signal input (NULL ≠ negative)
+  - `ppe_net` — input to asset_turnover
+  - `current_assets`, `current_liabilities` — inputs to current_ratio
+- Derived additions (Phase 5):
+  - `ebitda`, `ebitda_margin` — capital-structure-neutral profitability
+  - `asset_turnover` — revenue / ppe_net (capital efficiency)
+  - `current_ratio` — short-term liquidity
+  - `net_debt` — long_term_debt − cash − short_term_investments
+  - `net_dilution` — Δ shares YoY net of buybacks (SBC drag signal)
+  - `buyback_yield` — stock_repurchase / market_cap
+  - `zombie_flag` — binary distress gate; hard exclusion candidate.
+        Locked definition (BIS-style 4-condition AND):
+        `retained_earnings < 0` AND `avg(fcf, 3y) < 0` AND
+        `interest_coverage < 1` AND `cash_runway_yrs < 2`.
+        NULL when company has < 3 years FCF history (recent IPO);
+        short-circuits to 0 for debt-free companies (no interest_expense).
+        Expected catch: ~4-6% of universe.
+        Rejected alternatives: 2-condition (too loose, catches all
+        loss-stage SaaS); op_margin-based (non-cash adjustments distort
+        burn signal); current_ratio < 1 (deferred revenue inflates
+        denominator for SaaS, false positives).
+- Rationale: investor-grade analysis requires margin quality (EBITDA),
+  capital efficiency (asset_turnover, net_debt), shareholder-return
+  posture (buyback_yield, net_dilution), and a distress filter
+  (zombie_flag) — none of which existed in v1's metric set.
+- D4 dependency: layer placement and weights defer to Phase 6 D4 review.
+- Reversal cost: low for raw fields (already fetched, drop columns
+  from queries); medium for zombie_flag if it changes from hard-
+  exclusion to soft-flag (forces re-scoring).
+
+### Rejected metric candidates — D-Metrics-Rejected
+- Date: 2026-04-30
+- Items considered and excluded from Phase 4/5 scope:
+  - **Inventory turnover** — meaningful for hardware (Apple, Dell) but
+    near-zero variance for SaaS / Internet platforms (no inventory).
+    Cross-sub-sector aggregation would be misleading. Track in raw
+    schema only if needed for hardware deep-dive later.
+  - **OpEx breakdown (S&M, G&A separate)** — XBRL tags are inconsistent
+    across filers (some bundle S&M into SG&A, some split). Reliable
+    extraction requires per-filer parsing; cost > value at universe
+    scale. Keep `sga_expense` as a single rolled-up field; use
+    `rd_expense` separately (which IS reliably tagged).
+  - **AOCI (Accumulated Other Comprehensive Income)** — affects
+    book-value calculations for FX-heavy multinationals, but the
+    interpretation noise (currency hedges, pension adjustments) drowns
+    out signal at this universe size. Skip; `stockholders_equity`
+    captures the bottom line.
+- Reversal cost: low — re-add to schema if a Phase 5 metric specifically
+  needs them.
+
 ### D-Universe — Expanded to 16 sources
 - Date: 2026-05-07
 - Rule: 3 broad indices (IWV, IJH, IJR) + 13 thematic ETFs (was 11).
