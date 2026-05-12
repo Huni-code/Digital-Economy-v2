@@ -15,9 +15,12 @@ is cheap and side-effect free.
 
 from __future__ import annotations
 
+import os
 import re
+import time
 
 import pandas as pd
+import requests
 
 # Letters-only, 1-5 chars. Real US-listed equity tickers in our universe
 # are alphabetic; class suffixes (BRK.B, BF.B) get normalized in Phase 1C
@@ -74,3 +77,128 @@ def is_valid_equity_ticker(ticker) -> bool:
     if ticker is None or (isinstance(ticker, float) and pd.isna(ticker)):
         return False
     return bool(_TICKER_RE.match(str(ticker).strip()))
+
+
+# ────────────────────────────────────────────────────────────────────
+# OpenFIGI — CUSIP → ticker lookup (used by SEC N-PORT-P parser)
+# ────────────────────────────────────────────────────────────────────
+# Anonymous tier:  5  req/min, 10  jobs/request → ~50 jobs/min
+# With API key:    250 req/min, 100 jobs/request (set OPENFIGI_API_KEY env var)
+
+OPENFIGI_MAPPING_URL = "https://api.openfigi.com/v3/mapping"
+
+# Preferred US-listing exchCode set (NYSE, NASDAQ, NYSE Arca, NYSE American).
+# OpenFIGI's exchCode for the main US tape is "US" on consolidated quote;
+# individual exchanges show as UN/UQ/UR/UA. We accept all of these.
+_US_LISTING_EXCH_CODES = {"US", "UN", "UQ", "UR", "UA", "UF", "UV", "UW"}
+_EQUITY_SECURITY_TYPES = {
+    "Common Stock", "Class Stock", "ADR", "REIT",
+    "Depositary Receipt", "Common", "Equity",
+}
+
+
+def _pick_ticker_from_data(entries: list[dict]) -> str | None:
+    """OpenFIGI returns multiple identifier records per CUSIP (different
+    venues, class variants). Return only US-listed equities; otherwise
+    None.
+
+    NO foreign-exchange fallback. Some CUSIPs (e.g. Cayman-incorporated
+    dual-listed names like Confluent / 20717M103) return only foreign
+    venue records (Frankfurt 8QR, Xetra CFLTEUR). Accepting those would
+    write non-US tickers into the universe and break Phase 1C's SEC
+    ticker→CIK lookup. Better to leave them unresolved and let
+    `unmatched_cusips.csv` capture them for D5b foreign-filer review.
+    """
+    if not entries:
+        return None
+    # Pass 1: US listing + equity-like security
+    for e in entries:
+        if (e.get("exchCode") in _US_LISTING_EXCH_CODES
+                and e.get("securityType") in _EQUITY_SECURITY_TYPES
+                and e.get("ticker")):
+            return e["ticker"]
+    # Pass 2: any US listing with a ticker (covers some REIT / ADR
+    # records OpenFIGI tags with non-canonical securityType strings)
+    for e in entries:
+        if e.get("exchCode") in _US_LISTING_EXCH_CODES and e.get("ticker"):
+            return e["ticker"]
+    return None
+
+
+def lookup_cusip_batch(
+    cusips: list[str],
+    api_key: str | None = None,
+    timeout: int = 30,
+) -> dict[str, str | None]:
+    """Batch-map CUSIPs to US tickers via OpenFIGI.
+
+    Returns a dict[cusip → ticker | None]. Missing/unresolved CUSIPs map
+    to None (caller decides whether to log them).
+
+    Rate-limit handling:
+      - Without api_key: 10 jobs/request, ~12-second spacing (5 req/min).
+      - With api_key:    100 jobs/request, ~0.25-second spacing (250 req/min).
+    On HTTP 429, sleeps 10 s and retries (up to 3 attempts per batch).
+    """
+    if not cusips:
+        return {}
+
+    api_key = api_key or os.environ.get("OPENFIGI_API_KEY")
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["X-OPENFIGI-APIKEY"] = api_key
+        batch_size = 100
+        sleep_between = 60 / 250  # 0.24s
+    else:
+        batch_size = 10
+        sleep_between = 60 / 5  # 12s
+        print(
+            "  [openfigi] no OPENFIGI_API_KEY env var; running anonymous "
+            f"(10 jobs/req, 12s spacing). {len(cusips)} CUSIPs -> "
+            f"~{(len(cusips) / 10) * 12:.0f}s estimated."
+        )
+
+    # Dedup while preserving order; CUSIP queries are deterministic.
+    unique = list(dict.fromkeys(cusips))
+
+    results: dict[str, str | None] = {}
+    for i in range(0, len(unique), batch_size):
+        batch = unique[i:i + batch_size]
+        payload = [{"idType": "ID_CUSIP", "idValue": c} for c in batch]
+
+        data = None
+        for attempt in range(3):
+            try:
+                r = requests.post(
+                    OPENFIGI_MAPPING_URL,
+                    headers=headers,
+                    json=payload,
+                    timeout=timeout,
+                )
+                if r.status_code == 429:
+                    time.sleep(10)
+                    continue
+                r.raise_for_status()
+                data = r.json()
+                break
+            except Exception as e:
+                if attempt == 2:
+                    print(f"  [openfigi] batch {i}-{i + len(batch)} failed: {e}")
+                else:
+                    time.sleep(2 ** attempt)
+
+        if data is None:
+            for c in batch:
+                results[c] = None
+            time.sleep(sleep_between)
+            continue
+
+        # Responses arrive in the same order as the request payload.
+        for cusip, resp in zip(batch, data):
+            entries = resp.get("data") or []
+            results[cusip] = _pick_ticker_from_data(entries)
+
+        time.sleep(sleep_between)
+
+    # Expand back to caller's input order (handles input duplicates).
+    return {c: results.get(c) for c in cusips}

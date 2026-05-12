@@ -173,6 +173,8 @@ def parse(csv_text: str, source: str, data_as_of: str) -> pd.DataFrame:
     out = pd.DataFrame({
         "ticker": df["Ticker"].astype(str).str.strip().str.upper(),
         "name": df["Name"].astype(str).str.strip(),
+        "cusip": None,
+        "isin": None,
         "sector_ishares": df["Sector"].astype(str).str.strip(),
         "etf_market_value_usd": (
             df[mv_col].apply(normalize_currency) if mv_col else pd.NA
@@ -186,10 +188,12 @@ def parse(csv_text: str, source: str, data_as_of: str) -> pd.DataFrame:
     out["source_classification"] = None
     out["data_as_of"] = data_as_of
     # Lock column order so 1A/1B outputs concat cleanly downstream.
+    # cusip/isin populated only by SEC N-PORT-P (Vanguard); broad-index
+    # iShares CSVs don't carry them.
     return out[[
-        "ticker", "name", "sector_ishares", "etf_market_value_usd",
-        "weight_pct", "source_index", "classification_raw",
-        "source_classification", "data_as_of",
+        "ticker", "name", "cusip", "isin", "sector_ishares",
+        "etf_market_value_usd", "weight_pct", "source_index",
+        "classification_raw", "source_classification", "data_as_of",
     ]].reset_index(drop=True)
 
 

@@ -134,6 +134,22 @@ PAVE/IFRA (infrastructure, not tech). ARKK is **actively managed** —
 universe membership drifts ~30% / year as the manager rebalances. Capture
 date stamped in `source_indices` field.
 
+**Fetcher patterns (one per issuer, all in `pipeline/p1b_thematic_etfs.py`):**
+- iShares (IGV, SOXX) — CSV download, same as 1A
+- SSGA (XLK) — xlsx download, openpyxl
+- First Trust (SKYY) — HTML scrape, lxml + pandas.read_html
+- Vanguard (VGT) — **SEC N-PORT-P XML** (Vanguard's retail site has no
+  public CSV/JSON for holdings). Walks Vanguard World Fund trust
+  filings (CIK 0000052848), finds the series with seriesName matching
+  "INFORMATION TECHNOLOGY", parses `<invstOrSec>` rows. Holdings file
+  ships CUSIP but no ticker, so the parser additionally calls **OpenFIGI**
+  in bulk (`pipeline/_helpers.py::lookup_cusip_batch`) to backfill ticker.
+  Unresolved CUSIPs land in `data/universe/unmatched_cusips.csv` for
+  Phase 1C review. This is a Phase 1B-internal lookup distinct from
+  Phase 1C's universal ticker→CIK mapping.
+- ARKK, WCLD — deferred (see D-ETF-Skip-Bot-Protected in
+  docs/decisions.md).
+
 - [ ] Script `pipeline/p1b_etf_holdings.py` — download all 13, parse to
       single combined CSV with `source_etf` column.
 - [ ] Save to `data/universe/etf_holdings_combined.csv`.
@@ -289,6 +305,9 @@ CREATE TABLE companies (
     source_indices TEXT,
     foreign_filer INTEGER,       -- 0/1, from universe (Phase 1D)
     no_us_filings INTEGER,       -- 0/1, set in Phase 4 if XBRL empty
+    cusip TEXT,                  -- N-PORT-P primary id; NULL when source
+                                 -- was ticker-based (iShares/SSGA/FT)
+    isin TEXT,                   -- secondary id from N-PORT-P; NULL otherwise
     last_10k_date TEXT
 );
 

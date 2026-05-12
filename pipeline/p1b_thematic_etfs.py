@@ -48,6 +48,7 @@ import requests
 
 from _helpers import (
     is_valid_equity_ticker,
+    lookup_cusip_batch,
     normalize_currency,
     normalize_weight_pct,
 )
@@ -150,6 +151,8 @@ def parse_ishares(csv_text: str, source: str, data_as_of: str) -> pd.DataFrame:
     out = pd.DataFrame({
         "ticker": df["Ticker"].values,
         "name": df["Name"].astype(str).str.strip().values,
+        "cusip": None,
+        "isin": None,
         "sector_ishares": df["Sector"].astype(str).str.strip().values,
         "etf_market_value_usd": (
             df[mv_col].apply(normalize_currency).values if mv_col else pd.NA
@@ -176,10 +179,13 @@ SSGA_ASOF_RE = re.compile(r"As of\s+([0-9A-Za-z-]+)")
 FT_ASOF_RE = re.compile(r"[Aa]s of\s+(\d{1,2}/\d{1,2}/\d{4})")
 
 # Schema columns every Phase 1 parser must emit (order locked).
+# cusip/isin populated by SEC N-PORT-P parser (Vanguard); other issuers
+# leave them NULL. cusip is the primary identifier for N-PORT-P
+# downstream lookup (Phase 1C via OpenFIGI).
 SCHEMA_COLS = [
-    "ticker", "name", "sector_ishares", "etf_market_value_usd",
-    "weight_pct", "source_index", "classification_raw",
-    "source_classification", "data_as_of",
+    "ticker", "name", "cusip", "isin", "sector_ishares",
+    "etf_market_value_usd", "weight_pct", "source_index",
+    "classification_raw", "source_classification", "data_as_of",
 ]
 
 
@@ -256,6 +262,8 @@ def parse_ssga_xlsx(xlsx_bytes_or_text, source: str, data_as_of: str) -> pd.Data
     out = pd.DataFrame({
         "ticker": df["Ticker"].values,
         "name": df["Name"].astype(str).str.strip().values if "Name" in df.columns else pd.NA,
+        "cusip": None,
+        "isin": None,
         "sector_ishares": sector_clean.values,
         "etf_market_value_usd": pd.NA,  # SSGA xlsx doesn't carry this
         "weight_pct": (
@@ -332,6 +340,8 @@ def parse_first_trust_html(html_text: str, source: str, data_as_of: str) -> pd.D
     out = pd.DataFrame({
         "ticker": tickers.str.upper().values,
         "name": body.iloc[:, 0].astype(str).str.strip().values,
+        "cusip": None,
+        "isin": None,
         "sector_ishares": None,
         "etf_market_value_usd": body.iloc[:, 5].apply(normalize_currency).values,
         "weight_pct": body.iloc[:, 6].apply(normalize_weight_pct).values,
@@ -365,6 +375,201 @@ def http_get_html_with_cache(etf: str, url: str) -> tuple[str, str]:
         fb = files[-1]
         print(f"  [{etf}] using cached {fb.name}")
         return fb.read_text(encoding="utf-8"), fb.stem.split("_")[-1]
+
+
+# ────────────────────────────────────────────────────────────────────
+# SEC N-PORT-P — Vanguard VGT (no public CSV / SPA; XML via SEC EDGAR)
+# ────────────────────────────────────────────────────────────────────
+# VGT is the "Vanguard Information Technology Index Fund" series
+# (S000004452) inside the "Vanguard World Fund" trust (CIK 0000052848).
+# Note: CIK 0000036405 is a *different* Vanguard trust (Index Funds —
+# Value/Growth/Mid-Cap series) and does NOT contain VGT.
+
+NPORT_TRUST_VGT_CIK = "0000052848"           # Vanguard World Fund
+NPORT_VGT_SERIES_KEYWORD = "INFORMATION TECHNOLOGY"
+
+NPORT_NS = {
+    "n": "http://www.sec.gov/edgar/nport",
+    "com": "http://www.sec.gov/edgar/common",
+}
+
+
+def _nport_data_as_of(xml_text: str) -> str | None:
+    """N-PORT-P carries two dates:
+      <repPdEnd>  — fund's fiscal-quarter end (often months ahead of
+                    the actual snapshot for funds with off-calendar FY)
+      <repPdDate> — the holdings snapshot date (what we want)
+    Always pick <repPdDate>; fall back to repPdEnd only if missing."""
+    m = re.search(r"<repPdDate>([0-9]{4}-[0-9]{2}-[0-9]{2})</repPdDate>", xml_text)
+    if m:
+        return m.group(1)
+    m = re.search(r"<repPdEnd>([0-9]{4}-[0-9]{2}-[0-9]{2})</repPdEnd>", xml_text)
+    return m.group(1) if m else None
+
+
+def _find_vgt_nport_url(trust_cik: str, max_filings: int = 25) -> tuple[str, str]:
+    """Walk a Vanguard trust's recent filings, find the most recent
+    NPORT-P whose seriesName contains 'INFORMATION TECHNOLOGY'.
+
+    Returns (primary_doc_xml_url, filing_date_iso).
+    """
+    sub_url = f"https://data.sec.gov/submissions/CIK{trust_cik}.json"
+    r = requests.get(sub_url, headers=HEADERS, timeout=30)
+    r.raise_for_status()
+    sub = r.json()
+    recent = sub["filings"]["recent"]
+    forms = recent["form"]
+    accs = recent["accessionNumber"]
+    dates = recent["filingDate"]
+    nport_idx = [i for i, f in enumerate(forms) if f == "NPORT-P"]
+
+    cik_int = int(trust_cik)
+    series_re = re.compile(r"<seriesName>([^<]+)</seriesName>")
+    for idx in nport_idx[:max_filings]:
+        acc_clean = accs[idx].replace("-", "")
+        xml_url = (
+            f"https://www.sec.gov/Archives/edgar/data/"
+            f"{cik_int}/{acc_clean}/primary_doc.xml"
+        )
+        rr = requests.get(xml_url, headers=HEADERS, timeout=30)
+        if rr.status_code != 200:
+            continue
+        # Match only against <seriesName>, NOT free-text body — bodies
+        # contain holdings names that can trip a substring search
+        # (e.g. an international fund whose holdings include the words
+        # "INFORMATION TECHNOLOGY").
+        m = series_re.search(rr.text)
+        if not m:
+            continue
+        if NPORT_VGT_SERIES_KEYWORD in m.group(1).upper():
+            return xml_url, dates[idx]
+    raise RuntimeError(
+        f"No NPORT-P with seriesName matching "
+        f"{NPORT_VGT_SERIES_KEYWORD!r} in trust {trust_cik} "
+        f"(scanned {min(len(nport_idx), max_filings)} recent filings)"
+    )
+
+
+def http_get_nport_vgt_with_cache(etf: str, _url: str | None = None) -> tuple[str, str]:
+    """N-PORT-P fetcher specialised for VGT. The Registry url field is
+    None — we discover the canonical filing each run by walking the
+    trust's recent submissions.
+
+    Returns (xml_text, fallback_as_of) where fallback_as_of is the
+    submission filingDate (parser overrides with <repPdEnd>)."""
+    today = datetime.date.today().strftime("%Y%m%d")
+    cache_path = DATA_DIR / f"{etf.lower()}_holdings_{today}.xml"
+
+    if cache_path.exists():
+        return cache_path.read_text(encoding="utf-8"), today
+
+    try:
+        xml_url, filing_date = _find_vgt_nport_url(NPORT_TRUST_VGT_CIK)
+    except Exception as e:
+        # Fall back to most recent local cache if discovery fails.
+        files = sorted(DATA_DIR.glob(f"{etf.lower()}_holdings_*.xml"))
+        if files:
+            fb = files[-1]
+            print(f"  [{etf}] discovery failed ({e}); using cached {fb.name}")
+            return fb.read_text(encoding="utf-8"), fb.stem.split("_")[-1]
+        raise
+
+    rr = requests.get(xml_url, headers=HEADERS, timeout=60)
+    rr.raise_for_status()
+    cache_path.write_text(rr.text, encoding="utf-8")
+    return rr.text, filing_date
+
+
+def parse_vanguard_nport(xml_text: str, source: str, data_as_of: str) -> pd.DataFrame:
+    """Parse SEC N-PORT-P primary_doc.xml → normalized DataFrame.
+
+    Each <invstOrSec> entry becomes one row.
+      <assetCat>EC</assetCat> → equity-common; everything else (STIV
+      cash, DE derivative) is dropped.
+      <name>     → name
+      <cusip>    → cusip
+      <isin>     → isin
+      <pctVal>   → weight_pct
+      <valUSD>   → etf_market_value_usd
+
+    Ticker is NOT in N-PORT-P. After XML parsing, the function calls
+    OpenFIGI in bulk (CUSIP → ticker) to backfill the ticker column.
+    Unresolved CUSIPs land in `data/universe/unmatched_cusips.csv`
+    (append-only audit log) and keep ticker=NULL — Phase 1C downstream
+    can use CUSIP as a fallback identifier.
+    """
+    import xml.etree.ElementTree as ET
+
+    root = ET.fromstring(xml_text)
+    holdings = root.findall(".//n:invstOrSec", NPORT_NS)
+
+    resolved_asof = _nport_data_as_of(xml_text)
+    if resolved_asof:
+        data_as_of = resolved_asof
+
+    rows = []
+    for h in holdings:
+        asset_cat = h.findtext("n:assetCat", default="", namespaces=NPORT_NS)
+        if asset_cat != "EC":
+            continue
+        name = h.findtext("n:name", default="", namespaces=NPORT_NS)
+        cusip = h.findtext("n:cusip", default="", namespaces=NPORT_NS)
+        isin_el = h.find("n:identifiers/n:isin", NPORT_NS)
+        isin = isin_el.get("value") if isin_el is not None else None
+        pct = h.findtext("n:pctVal", default=None, namespaces=NPORT_NS)
+        val_usd = h.findtext("n:valUSD", default=None, namespaces=NPORT_NS)
+
+        rows.append({
+            "name": (name or "").strip(),
+            "cusip": (cusip or "").strip() or None,
+            "isin": isin,
+            "weight_pct": float(pct) if pct else None,
+            "etf_market_value_usd": float(val_usd) if val_usd else None,
+        })
+
+    if not rows:
+        raise ValueError(f"{source}: NPORT-P parsed zero EC rows")
+
+    print(f"  [{source}] {len(rows)} equity rows parsed from N-PORT-P")
+
+    # CUSIP → ticker via OpenFIGI
+    cusips = [r["cusip"] for r in rows if r["cusip"]]
+    ticker_map = lookup_cusip_batch(cusips)
+    matched = sum(1 for c in cusips if ticker_map.get(c))
+    print(f"  [{source}] OpenFIGI resolved {matched}/{len(cusips)} CUSIPs")
+
+    # Audit unmatched for downstream review.
+    unmatched = [r for r in rows if r["cusip"] and not ticker_map.get(r["cusip"])]
+    if unmatched:
+        _append_unmatched_cusips(unmatched, source)
+
+    out = pd.DataFrame(rows)
+    out["ticker"] = out["cusip"].map(lambda c: ticker_map.get(c) if c else None)
+    out["sector_ishares"] = None
+    out["source_index"] = source
+    out["classification_raw"] = None
+    out["source_classification"] = None
+    out["data_as_of"] = data_as_of
+    return out[SCHEMA_COLS].reset_index(drop=True)
+
+
+def _append_unmatched_cusips(rows: list[dict], source: str) -> None:
+    """Append-only audit log of CUSIPs OpenFIGI couldn't resolve."""
+    path = DATA_DIR / "unmatched_cusips.csv"
+    df = pd.DataFrame([
+        {
+            "cusip": r["cusip"],
+            "isin": r["isin"],
+            "name": r["name"],
+            "source_index": source,
+            "weight_pct": r["weight_pct"],
+            "logged_at": datetime.date.today().isoformat(),
+        }
+        for r in rows
+    ])
+    header = not path.exists()
+    df.to_csv(path, mode="a", header=header, index=False)
+    print(f"  [{source}] logged {len(df)} unmatched CUSIPs to {path.name}")
 
 
 def http_get_xlsx_with_cache(etf: str, url: str) -> tuple[bytes, str]:
@@ -453,8 +658,16 @@ REGISTRY: dict[str, ETFSpec] = {
         parser=parse_first_trust_html,
         fetcher=None,  # set below to http_get_html_with_cache
     ),
-    # WCLD, VGT — TBD per-issuer recon
-    # ARKK — see D-ETF-Skip in docs/decisions.md (deferred to Wave 2 end)
+    "VGT": ETFSpec(
+        ticker="VGT",
+        name="Vanguard Information Technology ETF",
+        issuer="Vanguard",
+        url=None,  # discovered dynamically from SEC EDGAR (trust CIK 52848)
+        parser=parse_vanguard_nport,
+        fetcher=None,  # set below to http_get_nport_vgt_with_cache
+    ),
+    # ARKK, WCLD — see D-ETF-Skip-Bot-Protected in docs/decisions.md
+    # (deferred to post-Wave 3)
     # ── Wave 3: family patterns (TBD) ──────────────────────────────
     # IBUY/HACK/GAMR (Amplify), FINX/SOCL/BOTZ (Global X)
 }
@@ -462,11 +675,12 @@ REGISTRY: dict[str, ETFSpec] = {
 # Non-CSV fetchers wired after function bodies are bound.
 REGISTRY["XLK"].fetcher = http_get_xlsx_with_cache
 REGISTRY["SKYY"].fetcher = http_get_html_with_cache
+REGISTRY["VGT"].fetcher = http_get_nport_vgt_with_cache
 
 
 WAVES = {
     1: ["IGV", "SOXX"],
-    2: ["XLK", "SKYY"],  # WCLD, VGT after recon; ARKK deferred (D-ETF-Skip)
+    2: ["XLK", "SKYY", "VGT"],  # ARKK + WCLD deferred (D-ETF-Skip-Bot-Protected)
     # 3: ["IBUY", "HACK", "GAMR", "FINX", "SOCL", "BOTZ"],
 }
 

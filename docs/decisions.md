@@ -47,32 +47,48 @@
   impacted (these companies would have been silently dropped under
   D5 original). Policy validated.
 
-### D-ETF-Skip — ARKK fetcher 스킵 (DEFERRED, 2026-05-12)
-- Status: **temporary skip**, revisit after Wave 2 complete
-- Context: ARKK 정찰 결과 정적 HTTP fetch 불가능.
-  - `ark-funds.com` legacy CSV URL → 404
-  - SPA로 전환, JS 렌더링 필요
-  - Wayback archive 없음 (`archived_snapshots: {}`)
-  - `/api/fund/holdings/1004` 존재하나 direct GET 시 SPA index.html
-    반환 (SPA-internal 인증/렌더 추정)
+### D-ETF-Skip-Bot-Protected — Bot-protected ETF fetcher 스킵 (DEFERRED, last updated 2026-05-12)
+- Status: **temporary skip**, revisit post-Wave 3
+- Affected ETFs:
+  * **ARKK** (added 2026-05-12): SPA, JS-rendered, legacy CSV URL 404,
+    Wayback archive empty, `/api/fund/holdings/1004` exists but direct
+    GET returns SPA index.html (SPA-internal auth/render).
+  * **WCLD** (added 2026-05-12): Cloudflare bot challenge —
+    all UA/header combinations return "Just a moment..." (JS execution
+    required to solve the challenge).
+- Common context: 두 ETF 모두 static HTTP fetch 불가능. 차단
+  메커니즘 다르지만 (SPA vs Cloudflare) 해결책 카테고리는 동일
+  (Playwright / 3rd-party / skip).
+- Coverage loss estimate (validated post-Wave 3):
+  * ARKK: 5-15 net unique tickers after thematic ETF overlap
+  * WCLD: 10-20 net unique after SKYY overlap (60-80% estimated,
+    needs Wave 3 data for validation)
 - Options evaluated:
-  A) Skip + revisit (선택)
-  B) Playwright headless browser (+100 lines, brittle 의존성)
-  C) 3rd-party (ETFdb/yfinance, 1-7d lag)
-  D) Permanent exclude
-- Decision: **A**. Wave 2 나머지 4개 (XLK/WCLD/SKYY/VGT) + Wave 3
-  (Amplify, Global X) 끝낸 후 universe coverage 정량 확인하고 B/C/D
-  중 선택.
-- Re-decision trigger: **Wave 3 완료 시점** (Amplify/Global X overlap
-  with ARKK quantified)
+  A) Skip + revisit (selected)
+  B) Playwright headless browser (+100 lines, brittle dependency)
+  C) cloudscraper / anti-bot bypass packages (anti-bot arms race,
+     issuer-specific, breaks when issuer changes challenge)
+  D) 3rd-party API (yfinance / ETFdb, 1-7d data lag, free-tier limits)
+  E) Permanent exclude
+- Decision: **A for both**. Wave 3 (Amplify HACK/IBUY/GAMR, Global X
+  FINX/SOCL/BOTZ) 완료 후 overlap 정량 분석으로 ARKK/WCLD 각각
+  B/C/D/E 결정.
+- Re-decision trigger: **Wave 3 완료 시점**
 - Rationale:
-  - ARKK actively managed (D-Universe ARKK caveat 참고), 우선순위 낮음.
-  - 1개 ETF 위해 Playwright 의존성 도입은 senior project ROI 나쁨.
-  - 다른 4개가 더 큰 unique ticker 기여 예상 (각 50-150 holdings).
-  - ARKK loss는 다른 thematic ETF가 cover하는 부분 빼고 봐야 정확.
-    Wave 3 (Amplify / Global X)까지 끝난 후 overlap 분석 후 결정.
-- Reversal cost: low (옵션 B/C 추후 추가 가능, 패턴은 1B 스크립트
-  registry 구조 그대로 확장).
+  - Senior project deadline 압박, 2개 ETF 위해 brittle 의존성 도입
+    ROI 낮음.
+  - Cloud 테마는 SKYY로, Innovation 테마는 Wave 3 Amplify로 부분
+    cover — critical narrative 구멍은 없음.
+  - ARKK actively managed (D-Universe ARKK caveat 참고).
+  - WCLD/SKYY 모두 passive "Cloud Computing" index, 60-80% overlap
+    expected — WCLD 손실 제한적.
+- Reversal cost: low — per-ETF B/C/D/E 추후 추가 가능, 1B 스크립트
+  registry 구조 그대로 확장.
+- **Update (2026-05-12, post-VGT)**: VGT N-PORT-P 데이터로 본
+  IWV/VGT가 mid-cap IT를 광범위하게 cover. ARKK/WCLD net-new 추정치
+  유지하되 (ARKK 5-15, WCLD 10-20) fetcher 작성 ROI 더 의문화됨 —
+  대부분 micro-cap 가능성. Wave 3 (Amplify/Global X) 완료 후 최종
+  결정. 자세한 학습은 D-Universe-Learning 참고.
 
 ### D-LLM — No LLM classification in Phase 3
 - Date: 2026-05-07
@@ -166,6 +182,35 @@
   holdings as of one specific download date. Re-running the pipeline
   6 months later will produce a different universe. Capture date is
   stamped in `source_indices` and methodology will document it.
+
+## Observations / learnings
+
+### D-Universe-Learning — ETF net-new ROI pattern (2026-05-12, Wave 2)
+- Status: **observation**, informs Wave 3 prioritization
+- Finding: IWV (Russell 3000)가 mid-cap IT를 이미 광범위하게 cover.
+  Thematic ETF의 진짜 net-new 가치는 "mid-cap catch-up"이 아니라:
+  (a) foreign-incorporated US-listed (D5b 케이스, e.g. Accenture / SAP)
+  (b) recent IPO (Russell reconstitution lag, 연 1회)
+  (c) 매우 작은 micro-cap (의문 가치, weight < 0.01%)
+- Wave 2 데이터:
+  * **SKYY** net new = 8 (4 foreign filer + 4 recent IPO) — 명확한 ROI
+  * **VGT** net new = 11 (대부분 micro-cap < 0.01% weight) — ROI 의문
+  * VGT의 진짜 가치 14 foreign-incorporated (Accenture/Seagate/NXP)
+    는 Phase 1C에서 어차피 잡힘 (SEC company_tickers.json 매칭).
+- Implication for Wave 3:
+  * **Amplify** (HACK/IBUY/GAMR): Cybersecurity / Online Retail / Gaming
+    테마 — Russell이 sector tag 약한 영역. 추가 가치 가능성 높음.
+  * **Global X** (FINX/SOCL/BOTZ): Fintech는 GICS Financial로 묶여 IWV
+    에 있을 가능성. Social / Robotics는 thematic 추가 가치 높음.
+  * 정찰 시 "net new 추정"을 명시적 평가 기준에 포함.
+  * 정찰 순서: HACK 먼저 (Amplify family 대표), FINX (Global X family
+    대표) → 두 패밀리 net-new 정량 후 나머지 4개 결정.
+- Implication for ARKK/WCLD re-decision:
+  * WCLD (Cloud): SKYY와 60-80% overlap 가정 → net new 추정 10-20
+  * ARKK (Innovation): IWV+VGT가 mid-cap 광범위 cover → net new 추정 5-15
+  * 둘 다 fetcher 작성 ROI 의문이 강화됨 (D-ETF-Skip-Bot-Protected
+    결정 정당성 ↑).
+- Reversal cost: zero — 데이터 기반 관찰, 정책 자체는 아님.
 
 ## Deferred decisions
 - D2 (taxonomy): decide at Phase 3 start

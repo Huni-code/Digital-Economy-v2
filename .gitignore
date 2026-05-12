@@ -30,9 +30,11 @@ data/cache/
 data/universe/*_holdings_*.csv
 data/universe/*_holdings_*.xlsx
 data/universe/*_holdings_*.html
+data/universe/*_holdings_*.xml
 
 # Recon scratch
 data/universe/_*_recon*
+data/universe/_*
 
 # SQLite journal / WAL — never commit
 data/*.db-journal
