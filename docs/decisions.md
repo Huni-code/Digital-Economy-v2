@@ -104,6 +104,25 @@
   available (that file is the canonical input for measuring what
   ARKK/WCLD would actually add net of broad + 11 thematic ETFs and
   Phase 1C foreign-filer resolution).
+- **Re-decision (2026-05-12, Phase 1D complete): E — permanent exclude
+  both ARKK and WCLD.**
+  - Evidence (yfinance `funds_data.top_holdings`, top 10 = 50-70% of
+    ETF weight):
+    - **ARKK top 10: 10/10 already in `raw_universe.csv`** (TSLA,
+      TEM, AMD, CRSP, SHOP, ROKU, HOOD, COIN, CRCL, PLTR). Net-new = 0.
+    - **WCLD top 10: 10/10 in universe** (DOCN/FSLY/TWLO/BRZE/FROG/
+      PANW/KVYO/NET/CRWD/DDOG; JFrog FROG flagged "new" by ticker-based
+      comparison but actually in universe via CIK 1800667 from VGT
+      N-PORT-P → EDGAR name search). Net-new = 0.
+  - Tail (holdings 11+) estimated 0-3 unique names each, all sub-1%
+    weight; not worth Playwright / cloudscraper / 3rd-party brittleness.
+  - D-Universe-Learning fully validated: broad indices (IWV+IJH+IJR)
+    plus 11 thematic ETFs already cover the US tech universe with high
+    redundancy. Marginal value of ARKK/WCLD ≈ 0.
+  - Rejected B/C/D: introducing browser automation or anti-bot bypass
+    for 0 net-new returns is unjustified senior-project effort.
+  - Reversal cost: low (registry-based fetcher, can be added later if
+    a future use case justifies it; per-ETF B/C/D still available).
 
 ### D-LLM — No LLM classification in Phase 3
 - Date: 2026-05-07
