@@ -46,6 +46,16 @@
   surfaced (SHOP / WIX / SAP / OTEX). Cloud sector analysis directly
   impacted (these companies would have been silently dropped under
   D5 original). Policy validated.
+- **Note (2026-05-12, Global X recon — `foreign_filer` semantics):**
+  the `foreign_filer` column is a **hint, not ground truth**. It's
+  derived from CUSIP first-char (CINS alpha = foreign-incorporated)
+  when CUSIP is available — Amplify/VGT carry CUSIP so the flag is
+  accurate for those rows. Global X ships SEDOL only (no CUSIP), so
+  Global X rows default to `foreign_filer=0` even when the underlying
+  security is foreign-domiciled (e.g., Adyen NL listed on Global X).
+  Phase 4 us-gaap fetch is the canonical resolver — companies failing
+  SEC XBRL get `no_us_filings=1`, which is the **ground truth** D5b
+  signal. Don't rely on `foreign_filer` alone for downstream policy.
 
 ### D-ETF-Skip-Bot-Protected — Bot-protected ETF fetcher 스킵 (DEFERRED, last updated 2026-05-12)
 - Status: **temporary skip**, revisit post-Wave 3

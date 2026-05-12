@@ -582,6 +582,130 @@ def _append_unmatched_cusips(rows: list[dict], source: str) -> None:
 
 
 # ────────────────────────────────────────────────────────────────────
+# Global X (FINX / SOCL / BOTZ) — per-fund CSV with daily date stamp
+# ────────────────────────────────────────────────────────────────────
+# URL canonical form (verified in recon, 2026-05-12):
+#   https://assets.globalxetfs.com/funds/holdings/{ticker_lower}_full-holdings_{YYYYMMDD}.csv
+# The date stamp moves daily; we try today → today-1 → ... → today-5 to
+# cover weekends/holidays. No HTML scrape required, no master CSV.
+#
+# CSV layout (skiprows=2 → header at row 3):
+#   row 1: fund name (e.g., "Global X FinTech ETF")
+#   row 2: "Fund Holdings Data as of MM/DD/YYYY"
+#   row 3: header — % of Net Assets, Ticker, Name, SEDOL, Market Price ($),
+#                   Shares Held, Market Value ($)
+#   …holdings…
+#   final row: CASH overlay (Ticker empty, Name='CASH')
+#   trailing row: disclaimer text (Ticker NaN)
+#
+# Identifiers: SEDOL only — no CUSIP. foreign_filer therefore defaults
+# to 0 for Global X rows; Phase 4 us-gaap fetch is ground truth (see
+# D5b Note about hint vs ground truth).
+
+GLOBALX_URL_TEMPLATE = (
+    "https://assets.globalxetfs.com/funds/holdings/"
+    "{ticker}_full-holdings_{date}.csv"
+)
+GLOBALX_FUND_NAMES = {
+    "FINX": "Global X FinTech ETF",
+    "SOCL": "Global X Social Media ETF",
+    "BOTZ": "Global X Robotics & Artificial Intelligence ETF",
+}
+GLOBALX_ASOF_RE = re.compile(r"as of\s+(\d{1,2}/\d{1,2}/\d{4})", re.IGNORECASE)
+
+
+def http_get_globalx_with_cache(etf: str, _url: str | None = None) -> tuple[str, str]:
+    """Global X CSV fetcher. URL has a daily date stamp; we try today
+    back through today-5 to cover weekends / holidays.
+
+    The Registry URL field is None — fetcher builds the canonical URL
+    each call. Cache is per-day; once we successfully download for a
+    given working date we reuse it.
+    """
+    today = datetime.date.today()
+    today_key = today.strftime("%Y%m%d")
+    cache_path = DATA_DIR / f"{etf.lower()}_holdings_{today_key}.csv"
+
+    if cache_path.exists():
+        return cache_path.read_text(encoding="utf-8"), today_key
+
+    last_err = None
+    for days_back in range(0, 6):
+        date_obj = today - datetime.timedelta(days=days_back)
+        date_str = date_obj.strftime("%Y%m%d")
+        url = GLOBALX_URL_TEMPLATE.format(ticker=etf.lower(), date=date_str)
+        try:
+            r = requests.get(url, headers=HEADERS, timeout=30)
+            if r.status_code == 200 and r.headers.get("content-type", "").startswith("text/csv"):
+                cache_path.write_text(r.text, encoding="utf-8")
+                return r.text, today_key
+            last_err = f"HTTP {r.status_code} for {date_str}"
+        except Exception as e:
+            last_err = str(e)
+
+    # Last-resort: fall back to most recent local cache
+    files = sorted(DATA_DIR.glob(f"{etf.lower()}_holdings_*.csv"))
+    if files:
+        fb = files[-1]
+        print(f"  [{etf}] no fresh URL found; using cached {fb.name}")
+        return fb.read_text(encoding="utf-8"), fb.stem.split("_")[-1]
+    raise RuntimeError(
+        f"Global X {etf}: no holdings file in last 6 days ({last_err})"
+    )
+
+
+def parse_globalx(csv_text: str, source: str, data_as_of: str) -> pd.DataFrame:
+    """Global X CSV → normalized DataFrame.
+
+    Filters (order matters):
+      1. drop disclaimer/CASH rows: Ticker NaN or empty
+      2. ticker regex (drops foreign listings like 'ADYEN NA')
+      3. drop currency-named rows (defensive)
+      4. weight > 0 (drops short cash overlay with negative weight)
+    """
+    # Pull as-of date from row 2.
+    m = GLOBALX_ASOF_RE.search(csv_text)
+    if m:
+        try:
+            data_as_of = datetime.datetime.strptime(
+                m.group(1), "%m/%d/%Y"
+            ).date().isoformat()
+        except ValueError:
+            pass
+
+    df = pd.read_csv(io.StringIO(csv_text), skiprows=2)
+
+    # Drop disclaimer (Ticker NaN) and CASH overlay (Ticker empty string).
+    df = df.dropna(subset=["Ticker"])
+    df = df[df["Ticker"].astype(str).str.strip() != ""]
+
+    # Standard equity-ticker regex (drops 'ADYEN NA' etc.)
+    df = df[df["Ticker"].astype(str).str.strip().apply(is_valid_equity_ticker)]
+    df = df[~df["Name"].apply(is_currency_placeholder)]
+
+    weight_col = "% of Net Assets"
+    mv_col = "Market Value ($)"
+
+    out = pd.DataFrame({
+        "ticker": df["Ticker"].astype(str).str.strip().str.upper().values,
+        "name": df["Name"].astype(str).str.strip().values,
+        "cusip": None,    # Global X provides SEDOL only; not stored (see D5b Note)
+        "isin": None,
+        "sector_ishares": None,
+        "etf_market_value_usd": df[mv_col].apply(normalize_currency).values,
+        "weight_pct": df[weight_col].apply(normalize_weight_pct).values,
+    })
+    out = out[out["weight_pct"].fillna(0) > 0].copy()
+
+    out["source_index"] = source
+    out["classification_raw"] = None
+    out["source_classification"] = None
+    out["foreign_filer"] = 0  # CUSIP absent → hint defaults to 0; Phase 4 ground truth
+    out["data_as_of"] = data_as_of
+    return out[SCHEMA_COLS].reset_index(drop=True)
+
+
+# ────────────────────────────────────────────────────────────────────
 # Amplify (HACK / IBUY / GAMR) — single master CSV, shared by 3 ETFs
 # ────────────────────────────────────────────────────────────────────
 # Amplify ships ALL its ETFs' holdings in ONE consolidated CSV. The
@@ -806,7 +930,31 @@ REGISTRY: dict[str, ETFSpec] = {
         parser=parse_amplify_master,
         fetcher=None,
     ),
-    # FINX/SOCL/BOTZ (Global X) — pending recon
+    # Global X (FINX/SOCL/BOTZ) — per-fund CSV with daily date stamp
+    "FINX": ETFSpec(
+        ticker="FINX",
+        name=GLOBALX_FUND_NAMES["FINX"],
+        issuer="Global X",
+        url=None,  # fetcher builds canonical URL with today's date
+        parser=parse_globalx,
+        fetcher=None,
+    ),
+    "SOCL": ETFSpec(
+        ticker="SOCL",
+        name=GLOBALX_FUND_NAMES["SOCL"],
+        issuer="Global X",
+        url=None,
+        parser=parse_globalx,
+        fetcher=None,
+    ),
+    "BOTZ": ETFSpec(
+        ticker="BOTZ",
+        name=GLOBALX_FUND_NAMES["BOTZ"],
+        issuer="Global X",
+        url=None,
+        parser=parse_globalx,
+        fetcher=None,
+    ),
 }
 
 # Non-CSV fetchers wired after function bodies are bound.
@@ -815,12 +963,14 @@ REGISTRY["SKYY"].fetcher = http_get_html_with_cache
 REGISTRY["VGT"].fetcher = http_get_nport_vgt_with_cache
 for _t in ("HACK", "IBUY", "GAMR"):
     REGISTRY[_t].fetcher = http_get_amplify_master_with_cache
+for _t in ("FINX", "SOCL", "BOTZ"):
+    REGISTRY[_t].fetcher = http_get_globalx_with_cache
 
 
 WAVES = {
     1: ["IGV", "SOXX"],
     2: ["XLK", "SKYY", "VGT"],  # ARKK + WCLD deferred (D-ETF-Skip-Bot-Protected)
-    3: ["HACK", "IBUY", "GAMR"],  # Amplify family; Global X TBD after recon
+    3: ["HACK", "IBUY", "GAMR", "FINX", "SOCL", "BOTZ"],  # Amplify + Global X
 }
 
 
