@@ -47,6 +47,8 @@ import pandas as pd
 import requests
 
 from _helpers import (
+    is_currency_placeholder,
+    is_foreign_cins,
     is_valid_equity_ticker,
     lookup_cusip_batch,
     normalize_currency,
@@ -164,6 +166,7 @@ def parse_ishares(csv_text: str, source: str, data_as_of: str) -> pd.DataFrame:
     out["source_index"] = source
     out["classification_raw"] = None
     out["source_classification"] = None
+    out["foreign_filer"] = 0  # iShares CSV has no CUSIP; D5b heuristic handled by Phase 1D
     out["data_as_of"] = data_as_of
     return out[SCHEMA_COLS].reset_index(drop=True)
 
@@ -179,13 +182,16 @@ SSGA_ASOF_RE = re.compile(r"As of\s+([0-9A-Za-z-]+)")
 FT_ASOF_RE = re.compile(r"[Aa]s of\s+(\d{1,2}/\d{1,2}/\d{4})")
 
 # Schema columns every Phase 1 parser must emit (order locked).
-# cusip/isin populated by SEC N-PORT-P parser (Vanguard); other issuers
-# leave them NULL. cusip is the primary identifier for N-PORT-P
-# downstream lookup (Phase 1C via OpenFIGI).
+# cusip/isin populated by SEC N-PORT-P parser (Vanguard) and Amplify
+# master CSV; other issuers leave them NULL.
+# foreign_filer derived from CUSIP first char (CINS alpha = foreign).
+# Where CUSIP is unavailable, defaults to 0 (Phase 1D may still flag via
+# ADR-pattern matching or Location field per D5b).
 SCHEMA_COLS = [
     "ticker", "name", "cusip", "isin", "sector_ishares",
     "etf_market_value_usd", "weight_pct", "source_index",
-    "classification_raw", "source_classification", "data_as_of",
+    "classification_raw", "source_classification", "foreign_filer",
+    "data_as_of",
 ]
 
 
@@ -274,6 +280,7 @@ def parse_ssga_xlsx(xlsx_bytes_or_text, source: str, data_as_of: str) -> pd.Data
     out["source_index"] = source
     out["classification_raw"] = None
     out["source_classification"] = None
+    out["foreign_filer"] = 0  # SSGA xlsx has no CUSIP
     out["data_as_of"] = data_as_of
     return out[SCHEMA_COLS].reset_index(drop=True)
 
@@ -349,6 +356,7 @@ def parse_first_trust_html(html_text: str, source: str, data_as_of: str) -> pd.D
     out["source_index"] = source
     out["classification_raw"] = body.iloc[:, 3].astype(str).str.strip().values
     out["source_classification"] = "First Trust"
+    out["foreign_filer"] = 0  # First Trust HTML doesn't ship CUSIP in our slice
     out["data_as_of"] = _ft_extract_asof(html_text, data_as_of)
     return out[SCHEMA_COLS].reset_index(drop=True)
 
@@ -549,6 +557,7 @@ def parse_vanguard_nport(xml_text: str, source: str, data_as_of: str) -> pd.Data
     out["source_index"] = source
     out["classification_raw"] = None
     out["source_classification"] = None
+    out["foreign_filer"] = out["cusip"].apply(is_foreign_cins).astype(int)
     out["data_as_of"] = data_as_of
     return out[SCHEMA_COLS].reset_index(drop=True)
 
@@ -570,6 +579,109 @@ def _append_unmatched_cusips(rows: list[dict], source: str) -> None:
     header = not path.exists()
     df.to_csv(path, mode="a", header=header, index=False)
     print(f"  [{source}] logged {len(df)} unmatched CUSIPs to {path.name}")
+
+
+# ────────────────────────────────────────────────────────────────────
+# Amplify (HACK / IBUY / GAMR) — single master CSV, shared by 3 ETFs
+# ────────────────────────────────────────────────────────────────────
+# Amplify ships ALL its ETFs' holdings in ONE consolidated CSV. The
+# product-page JS (`fund-display.js`) loads the same URL for every fund
+# and filters client-side by `Account == <ticker>`. We mirror that:
+#   1. fetch the master CSV once per day (shared cache across 3 ETFs)
+#   2. parse_amplify_master(csv, ticker, asof) slices by Account
+
+AMPLIFY_MASTER_URL = (
+    "https://amplifyetfs.com/wp-content/uploads/feeds/"
+    "AmplifyWeb.40XL.XL_Holdings.csv"
+)
+
+
+def http_get_amplify_master_with_cache(etf: str, url: str) -> tuple[str, str]:
+    """Amplify master CSV fetcher — single file shared by HACK/IBUY/GAMR.
+    Cache filename does NOT include the ETF ticker so the same file
+    serves all three Amplify fetches. The first call downloads; the
+    next two short-circuit to cache."""
+    today = datetime.date.today().strftime("%Y%m%d")
+    cache_path = DATA_DIR / f"amplify_master_holdings_{today}.csv"
+
+    if cache_path.exists():
+        return cache_path.read_text(encoding="utf-8"), today
+
+    try:
+        r = requests.get(url, headers=HEADERS, timeout=30)
+        r.raise_for_status()
+        cache_path.write_text(r.text, encoding="utf-8")
+        return r.text, today
+    except Exception as e:
+        print(f"  [{etf}] Amplify master download failed: {e}")
+        files = sorted(DATA_DIR.glob("amplify_master_holdings_*.csv"))
+        if not files:
+            raise RuntimeError(
+                f"{etf}: Amplify master fetch failed and no cache available"
+            ) from e
+        fb = files[-1]
+        print(f"  [{etf}] using cached {fb.name}")
+        return fb.read_text(encoding="utf-8"), fb.stem.split("_")[-1]
+
+
+def parse_amplify_master(csv_text: str, source: str, data_as_of: str) -> pd.DataFrame:
+    """Slice the Amplify master CSV down to one fund's equity holdings.
+
+    Filter chain (order is important — each step relies on the prior):
+      1. Account == source                  — select the ETF
+      2. StockTicker != 'Cash&Other'        — drop cash sweep rows
+      3. MoneyMarketFlag != 'Y'             — drop money market funds
+                                              (AGPXX etc., valid 5-letter
+                                              tickers but not equity)
+      4. is_valid_equity_ticker(StockTicker) — drop foreign-listing
+                                              shorthand like '4704 JP'
+      5. weight_pct > 0                      — drop zero-weight overlays
+      6. ~is_currency_placeholder(name)     — drop FX overlays
+                                              (KRW "SOUTH KOREA WON")
+    """
+    df = pd.read_csv(io.StringIO(csv_text))
+
+    df = df[df["Account"] == source]
+    df = df[df["StockTicker"].astype(str).str.strip() != "Cash&Other"]
+    if "MoneyMarketFlag" in df.columns:
+        df = df[df["MoneyMarketFlag"].astype(str).str.strip().str.upper() != "Y"]
+    df = df[df["StockTicker"].apply(is_valid_equity_ticker)]
+    df = df[~df["SecurityName"].apply(is_currency_placeholder)]
+
+    # Refresh data_as_of from the row-level Date field if present.
+    if "Date" in df.columns and len(df) > 0:
+        date_val = df["Date"].iloc[0]
+        try:
+            data_as_of = datetime.datetime.strptime(
+                str(date_val), "%m/%d/%Y"
+            ).date().isoformat()
+        except (ValueError, TypeError):
+            pass
+
+    weight_series = df["Weightings"].apply(normalize_weight_pct)
+    mv_series = df["MarketValue"].apply(normalize_currency)
+    cusip_series = df["CUSIP"].astype(str).str.strip()
+    # Coerce 'nan' literals to None
+    cusip_series = cusip_series.where(cusip_series.str.lower() != "nan", None)
+
+    out = pd.DataFrame({
+        "ticker": df["StockTicker"].astype(str).str.strip().str.upper().values,
+        "name": df["SecurityName"].astype(str).str.strip().values,
+        "cusip": cusip_series.values,
+        "isin": None,
+        "sector_ishares": None,
+        "etf_market_value_usd": mv_series.values,
+        "weight_pct": weight_series.values,
+    })
+    # Drop the zero-weight rows (currencies/cash that survived earlier filters).
+    out = out[out["weight_pct"].fillna(0) > 0].copy()
+
+    out["source_index"] = source
+    out["classification_raw"] = None
+    out["source_classification"] = None
+    out["foreign_filer"] = out["cusip"].apply(is_foreign_cins).astype(int)
+    out["data_as_of"] = data_as_of
+    return out[SCHEMA_COLS].reset_index(drop=True)
 
 
 def http_get_xlsx_with_cache(etf: str, url: str) -> tuple[bytes, str]:
@@ -668,20 +780,47 @@ REGISTRY: dict[str, ETFSpec] = {
     ),
     # ARKK, WCLD — see D-ETF-Skip-Bot-Protected in docs/decisions.md
     # (deferred to post-Wave 3)
-    # ── Wave 3: family patterns (TBD) ──────────────────────────────
-    # IBUY/HACK/GAMR (Amplify), FINX/SOCL/BOTZ (Global X)
+    # ── Wave 3: family patterns ────────────────────────────────────
+    # Amplify (HACK/IBUY/GAMR) — single master CSV, client-side filter by Account
+    "HACK": ETFSpec(
+        ticker="HACK",
+        name="Amplify Cybersecurity ETF",
+        issuer="Amplify",
+        url=AMPLIFY_MASTER_URL,
+        parser=parse_amplify_master,
+        fetcher=None,  # set below to http_get_amplify_master_with_cache
+    ),
+    "IBUY": ETFSpec(
+        ticker="IBUY",
+        name="Amplify Online Retail ETF",
+        issuer="Amplify",
+        url=AMPLIFY_MASTER_URL,
+        parser=parse_amplify_master,
+        fetcher=None,
+    ),
+    "GAMR": ETFSpec(
+        ticker="GAMR",
+        name="Amplify Video Game Tech ETF (ex-Wedbush ETFMG)",
+        issuer="Amplify",
+        url=AMPLIFY_MASTER_URL,
+        parser=parse_amplify_master,
+        fetcher=None,
+    ),
+    # FINX/SOCL/BOTZ (Global X) — pending recon
 }
 
 # Non-CSV fetchers wired after function bodies are bound.
 REGISTRY["XLK"].fetcher = http_get_xlsx_with_cache
 REGISTRY["SKYY"].fetcher = http_get_html_with_cache
 REGISTRY["VGT"].fetcher = http_get_nport_vgt_with_cache
+for _t in ("HACK", "IBUY", "GAMR"):
+    REGISTRY[_t].fetcher = http_get_amplify_master_with_cache
 
 
 WAVES = {
     1: ["IGV", "SOXX"],
     2: ["XLK", "SKYY", "VGT"],  # ARKK + WCLD deferred (D-ETF-Skip-Bot-Protected)
-    # 3: ["IBUY", "HACK", "GAMR", "FINX", "SOCL", "BOTZ"],
+    3: ["HACK", "IBUY", "GAMR"],  # Amplify family; Global X TBD after recon
 }
 
 

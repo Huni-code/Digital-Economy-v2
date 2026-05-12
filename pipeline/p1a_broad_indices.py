@@ -186,6 +186,7 @@ def parse(csv_text: str, source: str, data_as_of: str) -> pd.DataFrame:
     out["source_index"] = source
     out["classification_raw"] = None
     out["source_classification"] = None
+    out["foreign_filer"] = 0  # iShares CSV has no CUSIP; Phase 1D heuristic later
     out["data_as_of"] = data_as_of
     # Lock column order so 1A/1B outputs concat cleanly downstream.
     # cusip/isin populated only by SEC N-PORT-P (Vanguard); broad-index
@@ -193,7 +194,8 @@ def parse(csv_text: str, source: str, data_as_of: str) -> pd.DataFrame:
     return out[[
         "ticker", "name", "cusip", "isin", "sector_ishares",
         "etf_market_value_usd", "weight_pct", "source_index",
-        "classification_raw", "source_classification", "data_as_of",
+        "classification_raw", "source_classification", "foreign_filer",
+        "data_as_of",
     ]].reset_index(drop=True)
 
 

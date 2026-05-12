@@ -211,6 +211,20 @@
   * 둘 다 fetcher 작성 ROI 의문이 강화됨 (D-ETF-Skip-Bot-Protected
     결정 정당성 ↑).
 - Reversal cost: zero — 데이터 기반 관찰, 정책 자체는 아님.
+- **Update (2026-05-12, Wave 3 Amplify)**:
+  - **REFUTED**: "Russell이 Cybersecurity sector tag 약함" 가설. Russell
+    3000이 US cybersecurity (CRWD/PANW/FTNT/ZS/OKTA/NET 등) 잘 잡음.
+    HACK의 21개 holdings 중 19개가 IWV에 이미 있고, net-new 2개
+    (RDWR/CHKP)는 둘 다 Israeli foreign filer.
+  - **재정의**: thematic ETF 진짜 가치 패턴은 "sector tag 보완"이
+    아니라 **"foreign filer surfacing"**. Wave 2 SKYY + Wave 3
+    Amplify 합쳐 26개 net-new 중 거의 전부가 D5b 케이스
+    (Israel / China / Singapore / LatAm).
+  - 자동화 함의: CUSIP CINS prefix 기반 `foreign_filer=1` flag 박음
+    (Phase 1B 자동 감지). 한계: ADR-wrapped foreign (SE/NTES/MELI 등
+    digit-CUSIP)은 미감지 — Phase 4 us-gaap fetch 실패로 분기.
+  - Wave 3 Global X 정찰 가설: 같은 패턴 예상 (FINX 일부 foreign
+    fintech, SOCL 중국 social media, BOTZ 일본 robotics 등).
 
 ## Deferred decisions
 - D2 (taxonomy): decide at Phase 3 start

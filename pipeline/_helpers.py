@@ -79,6 +79,62 @@ def is_valid_equity_ticker(ticker) -> bool:
     return bool(_TICKER_RE.match(str(ticker).strip()))
 
 
+# Currency codes / words that appear as "holdings" entries in some ETF
+# master CSVs (Amplify ships e.g., "KRW / SOUTH KOREA WON 0.00%" alongside
+# equity rows). Drop these — they're cash/FX overlay, not equity exposure.
+_CURRENCY_KEYWORDS = (
+    # 3-letter ISO codes (only check as whole word to avoid false hits)
+    "USD", "EUR", "GBP", "JPY", "KRW", "CNY", "HKD", "CHF",
+    "CAD", "AUD", "SGD", "TWD", "INR", "BRL", "MXN", "RUB",
+    "ZAR", "TRY", "SEK", "NOK", "DKK", "ILS", "PLN", "NZD",
+    # English currency names
+    "DOLLAR", "YEN", "WON", "EURO", "POUND",
+    "YUAN", "RUPEE", "PESO", "REAL", "RAND", "FRANC",
+)
+
+
+def is_currency_placeholder(name) -> bool:
+    """True iff `name` looks like a currency / cash-overlay placeholder.
+
+    Catches rows like:
+      "KRW / SOUTH KOREA WON"
+      "US DOLLAR"
+      "JPY YEN"
+    These trip the ticker regex (3 caps letters) but carry zero analytical
+    value — they're FX overlays the ETF holds for currency hedging.
+    """
+    if name is None or (isinstance(name, float) and pd.isna(name)):
+        return False
+    upper = str(name).upper()
+    # Word-boundary-ish: split on non-alpha and check tokens
+    tokens = re.split(r"[^A-Z]+", upper)
+    return any(t in _CURRENCY_KEYWORDS for t in tokens if t)
+
+
+def is_foreign_cins(cusip) -> bool:
+    """True iff `cusip` starts with an alphabetic character.
+
+    The first character of a CUSIP indicates incorporation jurisdiction
+    when the security uses CINS (CUSIP International Numbering System):
+      G — Cayman Islands / Channel Islands / Ireland / UK / Bermuda
+      M — Israel
+      N — Netherlands
+      Y — Singapore
+      (other letters less common)
+
+    US-incorporated equities have CUSIPs starting with a digit. So
+    alpha-first ⇒ foreign incorporation, even when the security trades on
+    a US exchange (e.g., Accenture PLC ACN on NYSE has CUSIP G1151C101).
+    This is the canonical hint for the D5b `foreign_filer` flag when CUSIP
+    is available; absent CUSIP, defaults to False (caller can use other
+    heuristics like ADR-pattern matching or Location field).
+    """
+    if cusip is None or (isinstance(cusip, float) and pd.isna(cusip)):
+        return False
+    s = str(cusip).strip()
+    return bool(s) and s[0].isalpha()
+
+
 # ────────────────────────────────────────────────────────────────────
 # OpenFIGI — CUSIP → ticker lookup (used by SEC N-PORT-P parser)
 # ────────────────────────────────────────────────────────────────────
