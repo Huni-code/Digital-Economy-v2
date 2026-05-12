@@ -1,0 +1,31 @@
+ticker,name,cusip,isin,foreign_filer,source_indices,cik,name_sec,match_source,unmatched_category
+ADRO,CHINOOK THERAPEUTICS INC CVR,,,0,IWV,,,,typo_or_unknown
+AGNT,EXP WORLD HOLDINGS INC,,,0,IJR;IWV,,,,typo_or_unknown
+AKE,AKERO THERAPEUTICS CVR,,,0,IWV,,,,typo_or_unknown
+FRBA,FIRST BANK,,,0,IWV,,,,typo_or_unknown
+GTXI,GTXI INC - CVR,,,0,IWV,,,,typo_or_unknown
+HIFS,HINGHAM INSTITUTION FOR SAVINGS,,,0,IWV,,,,typo_or_unknown
+INH,INHIBRX INC CVR,,,0,IWV,,,,typo_or_unknown
+NBN,NORTHEAST BANK,,,0,IWV,,,,typo_or_unknown
+P5N994,Petrocorp Inc Escrow,,,0,IWV,,,,typo_or_unknown
+THRD,THIRD HARMONIC BIO INC,,,0,IWV,,,,typo_or_unknown
+TOWN,TOWNEBANK,,,0,IWV,,,,typo_or_unknown
+,Confluent Inc,20717M103,US20717M1036,0,VGT,,,,likely_recent_ipo
+,Onestream Inc,68278B107,US68278B1070,0,VGT,,,,likely_recent_ipo
+,Pivotal Software Inc,725ESC016,US725ESC0166,0,VGT,,,,likely_recent_ipo
+,SEMrush Holdings Inc,81686C104,US81686C1045,0,VGT,,,,likely_recent_ipo
+,Iris Energy Ltd,,AU0000185993,1,VGT,,,,foreign_adr
+,Ambarella Inc,G037AX101,KYG037AX1015,1,VGT,,,,foreign_cins
+,Bit Digital Inc,G1144A105,KYG1144A1058,1,VGT,,,,foreign_cins
+,Accenture PLC,G1151C101,IE00B4BNMY34,1,VGT,,,,foreign_cins
+,Credo Technology Group Holding Ltd,G25457105,KYG254571055,1,VGT,,,,foreign_cins
+,Fabrinet,G3323L100,KYG3323L1005,1,VGT,,,,foreign_cins
+,Ichor Holdings Ltd,G4740B105,KYG4740B1059,1,VGT,,,,foreign_cins
+,Alpha & Omega Semiconductor Ltd,G6331P104,BMG6331P1041,1,VGT,,,,foreign_cins
+,Seagate Technology Holdings PLC,G7997R103,IE00BKVD2N49,1,VGT,,,,foreign_cins
+,TE Connectivity PLC,G87052109,IE000IVNQZ81,1,VGT,,,,foreign_cins
+,JFrog Ltd,M6191J100,IL0011684185,1,VGT,,,,foreign_cins
+,Pagaya Technologies Ltd,M7S64L123,IL0011858912,1,VGT,,,,foreign_cins
+,Elastic NV,N14506104,NL0013056914,1,VGT,,,,foreign_cins
+,NXP Semiconductors NV,N6596X109,NL0009538784,1,VGT,,,,foreign_cins
+,Flex Ltd,Y2573F102,SG9999000020,1,VGT,,,,foreign_cins

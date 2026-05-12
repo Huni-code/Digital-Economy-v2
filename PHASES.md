@@ -154,11 +154,56 @@ date stamped in `source_indices` field.
       single combined CSV with `source_etf` column.
 - [ ] Save to `data/universe/etf_holdings_combined.csv`.
 
-### 1C — Ticker → CIK mapping
+### 1C — Ticker → CIK mapping (extended, empirical staging)
 
-- [ ] Download SEC `https://www.sec.gov/files/company_tickers.json` (~13k rows)
-- [ ] Cache to `data/cache/company_tickers.json`
-- [ ] Build dict: ticker → (cik, name)
+Wave 1B exposed three failure modes that the original "single JSON
+lookup" can't handle: foreign-incorporated (CINS) holdings without US
+tickers, ADRs missing from `company_tickers.json`, and recent IPOs
+ahead of the SEC ticker-map refresh cadence. 1C is therefore staged
+so simple cases settle in 1C-1 and harder cases trigger 1C-3/4 only
+if the data demands it.
+
+**1C-1 — Simple SEC mapping**
+- [ ] Download `https://www.sec.gov/files/company_tickers.json` (~13k rows)
+- [ ] Cache to `data/cache/company_tickers.json` (7-day expiry)
+- [ ] Load `broad_indices_combined.csv` + `etf_thematic_combined.csv`,
+      dedup on ticker, aggregate `source_index` → `source_indices`
+      (semicolon-joined) and `foreign_filer` (any-true).
+- [ ] Left-join ticker → (cik, name_sec). Apply
+      `data/universe/manual_ticker_cik_overrides.csv` after the
+      auto-match.
+- [ ] Output: `data/universe/matched_universe.csv` +
+      `data/universe/unmatched_initial.csv`.
+
+**1C-2 — Classify unmatched**
+- [ ] Categorize each unmatched row:
+  - `foreign_cins` — CUSIP first char is alpha (G/M/N/Y...)
+  - `foreign_adr` — `foreign_filer=1` but no CUSIP (Wave 1 iShares ADRs)
+  - `likely_recent_ipo` — only in thematic ETFs, not in any broad index
+  - `typo_or_unknown` — none of the above
+
+**1C-3 — Foreign filer name resolution (conditional)**
+Trigger: `foreign_cins + foreign_adr ≥ 10` unmatched.
+- [ ] SEC EDGAR full-text search by company name for each unresolved
+      foreign filer.
+- [ ] Cache responses to `data/cache/edgar_company_search/{slug}.json`.
+- [ ] Resolved CIKs flow back into `matched_universe.csv` with
+      `foreign_filer=1` preserved.
+
+**1C-4 — Recent IPO resolution (conditional)**
+Trigger: `likely_recent_ipo ≥ 5` unmatched.
+- [ ] For each, try `company_tickers_exchange.json` (newer SEC
+      endpoint with exchange info) then `submissions/CIK{cik}.json`
+      via ticker lookup against EDGAR full-text search.
+
+**1C-5 — Final unmatched + ARKK/WCLD evaluation input**
+- [ ] `data/universe/unmatched_final.csv` — rows still without CIK
+      after 1C-1 through 1C-4, with `reason` column.
+- [ ] This file is the canonical input to the ARKK/WCLD re-decision
+      (D-ETF-Skip-Bot-Protected re-decision trigger has fired).
+
+**Estimate:** 0.5 day best case (1C-1 + 1C-2 only) → 1 day worst case
+(all of 1C-3/4 + manual review). Earlier 1.5d estimate revised.
 
 ### 1D — Union + dedup
 

@@ -99,6 +99,11 @@
   유지하되 (ARKK 5-15, WCLD 10-20) fetcher 작성 ROI 더 의문화됨 —
   대부분 micro-cap 가능성. Wave 3 (Amplify/Global X) 완료 후 최종
   결정. 자세한 학습은 D-Universe-Learning 참고.
+- **Trigger fired (2026-05-12, Wave 3 complete)**: re-decision criteria
+  met. TODO — evaluate after Phase 1C `unmatched_final.csv` is
+  available (that file is the canonical input for measuring what
+  ARKK/WCLD would actually add net of broad + 11 thematic ETFs and
+  Phase 1C foreign-filer resolution).
 
 ### D-LLM — No LLM classification in Phase 3
 - Date: 2026-05-07

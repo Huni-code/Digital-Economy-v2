@@ -1,0 +1,12 @@
+ticker,name,cusip,isin,foreign_filer,source_indices,cik,name_sec,match_source,unmatched_category,resolution_reason
+ADRO,CHINOOK THERAPEUTICS INC CVR,,,0,IWV,,,,typo_or_unknown,typo_or_unknown
+AGNT,EXP WORLD HOLDINGS INC,,,0,IJR;IWV,,,,typo_or_unknown,typo_or_unknown
+AKE,AKERO THERAPEUTICS CVR,,,0,IWV,,,,typo_or_unknown,typo_or_unknown
+FRBA,FIRST BANK,,,0,IWV,,,,typo_or_unknown,typo_or_unknown
+GTXI,GTXI INC - CVR,,,0,IWV,,,,typo_or_unknown,typo_or_unknown
+HIFS,HINGHAM INSTITUTION FOR SAVINGS,,,0,IWV,,,,typo_or_unknown,typo_or_unknown
+INH,INHIBRX INC CVR,,,0,IWV,,,,typo_or_unknown,typo_or_unknown
+NBN,NORTHEAST BANK,,,0,IWV,,,,typo_or_unknown,typo_or_unknown
+P5N994,Petrocorp Inc Escrow,,,0,IWV,,,,typo_or_unknown,typo_or_unknown
+THRD,THIRD HARMONIC BIO INC,,,0,IWV,,,,typo_or_unknown,typo_or_unknown
+TOWN,TOWNEBANK,,,0,IWV,,,,typo_or_unknown,typo_or_unknown
