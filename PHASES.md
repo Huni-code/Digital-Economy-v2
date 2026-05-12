@@ -205,32 +205,37 @@ Trigger: `likely_recent_ipo ≥ 5` unmatched.
 **Estimate:** 0.5 day best case (1C-1 + 1C-2 only) → 1 day worst case
 (all of 1C-3/4 + manual review). Earlier 1.5d estimate revised.
 
-### 1D — Union + dedup
+### 1D — Universe finalization ✓
 
-- [ ] Merge all 16 sources on ticker (3 broad + 13 thematic)
-- [ ] Left-join CIK from 1C
-- [ ] Drop rows missing CIK (likely OTC, ADR with non-standard ticker,
-      newly-listed not yet in SEC ticker map)
-- [ ] Output: `data/universe/raw_universe.csv` — expected ~3,500-4,000
-- [ ] Columns: cik, ticker, name, sector_ishares, source_indices
-      (semicolon-joined, e.g., `"IWV;IJR;IGV;WCLD"`),
-      `requires_review` (0/1), `foreign_filer` (0/1, default 0; 1 if
-      ticker matches known ADR pattern or Location != "United States"
-      in iShares holdings CSV), data_as_of_min, data_as_of_max
-- [ ] Real `market_cap_usd` is added in Phase 2A from yfinance — kept
-      out of 1D so the universe file stays clearly source-attributed.
-- See D5b in `docs/decisions.md` for how `foreign_filer` flows through
-  Phase 4 (XBRL fetch attempted, `no_us_filings=1` on failure) and
-  Phase 8 (Foreign Bellwethers qualitative section).
-- [ ] **ARKK-only flag:** any company whose `source_indices` contains
-      `"ARKK"` AND no broad index (IWV/IJH/IJR) AND no other thematic ETF
-      → set `requires_review = 1`. Rationale: ARKK is actively managed
-      and includes off-thesis names (Tesla, medical devices). These rows
-      flow into Phase 2D borderline review automatically.
+Originally framed as "merge ETF holdings + left-join CIK + drop missing".
+In practice the extended 1C-1 + 1C-3 staging finished both the merge
+and the CIK lookup; 1D became a **finalization / quality pass** that
+renames `matched_universe.csv` to the canonical `raw_universe.csv` and
+verifies invariants before Phase 2 consumes it.
 
-**Deliverable:** `raw_universe.csv` with ~3,500-4,000 candidates.
-**Estimate:** 1.5 days (per-issuer ETF formats differ; ARKK / WisdomTree /
-Global X may need light scraping).
+- [x] Verify required columns present: `cik`, `ticker`, `name`, `cusip`,
+      `isin`, `foreign_filer`, `source_indices`, `match_source`.
+- [x] Pre-create Phase 2A placeholder columns as NULL so schema stays
+      stable through Phase 2: `gics_sector`, `gics_industry_group`,
+      `gics_sub_industry`, `sic`, `sic_description`, `market_cap_usd`,
+      `employees`, `last_10k_date`.
+- [x] Quality checks:
+      - CIK uniqueness (2,621 unique, 0 dups)
+      - Ticker uniqueness over non-null (2,615 non-null, 6 null from
+        VGT N-PORT-P EDGAR-resolved rows where SEC search returned CIK
+        but no ticker)
+      - No `unmatched_final.csv` ticker leaked back in
+      - `foreign_filer` distribution: 22 flagged (CUSIP-based hint)
+      - `cusip` not-null: 379 (VGT 319 + Amplify 60)
+- [x] ARKK-only `requires_review` flag deferred — Amplify/Global X
+      patterns made it less critical, and ARKK itself is deferred under
+      D-ETF-Skip-Bot-Protected. Can be reinstated when ARKK is added.
+
+**Output:** `data/universe/raw_universe.csv` — **2,621 distinct CIKs**.
+**Excluded:** 11 rows in `unmatched_final.csv` (CVR rights / small
+banks / escrow — none are digital economy candidates).
+**Actual time:** ~1 hour (originally estimated 1.5 days — most of that
+work landed inside 1C).
 
 ---
 
@@ -353,6 +358,9 @@ CREATE TABLE companies (
     cusip TEXT,                  -- N-PORT-P primary id; NULL when source
                                  -- was ticker-based (iShares/SSGA/FT)
     isin TEXT,                   -- secondary id from N-PORT-P; NULL otherwise
+    match_source TEXT,           -- 1C audit trail: sec_auto, sec_variant:*,
+                                 -- edgar_search:j=*:active|inactive, or
+                                 -- manual_override
     last_10k_date TEXT
 );
 
