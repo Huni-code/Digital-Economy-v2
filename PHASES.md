@@ -153,9 +153,14 @@ date stamped in `source_indices` field.
 - [ ] Output: `data/universe/raw_universe.csv` — expected ~3,500-4,000
 - [ ] Columns: cik, ticker, name, sector_ishares, source_indices
       (semicolon-joined, e.g., `"IWV;IJR;IGV;WCLD"`),
-      `requires_review` (0/1), data_as_of_min, data_as_of_max
+      `requires_review` (0/1), `foreign_filer` (0/1, default 0; 1 if
+      ticker matches known ADR pattern or Location != "United States"
+      in iShares holdings CSV), data_as_of_min, data_as_of_max
 - [ ] Real `market_cap_usd` is added in Phase 2A from yfinance — kept
       out of 1D so the universe file stays clearly source-attributed.
+- See D5b in `docs/decisions.md` for how `foreign_filer` flows through
+  Phase 4 (XBRL fetch attempted, `no_us_filings=1` on failure) and
+  Phase 8 (Foreign Bellwethers qualitative section).
 - [ ] **ARKK-only flag:** any company whose `source_indices` contains
       `"ARKK"` AND no broad index (IWV/IJH/IJR) AND no other thematic ETF
       → set `requires_review = 1`. Rationale: ARKK is actively managed
@@ -282,6 +287,8 @@ CREATE TABLE companies (
     inclusion_reason TEXT,
     in_russell_3000 INTEGER,
     source_indices TEXT,
+    foreign_filer INTEGER,       -- 0/1, from universe (Phase 1D)
+    no_us_filings INTEGER,       -- 0/1, set in Phase 4 if XBRL empty
     last_10k_date TEXT
 );
 
@@ -428,6 +435,12 @@ current_liabilities:
       `abs()` and store positive. Drop the row + log if `abs() > 0.5 *
       revenue` for that year (almost certainly a tag misuse, e.g.,
       total treasury stock balance instead of period delta).
+- [ ] **Foreign filer handling (D5b):**
+      * `foreign_filer=1` 회사도 SEC XBRL Company Facts API fetch 시도
+      * Response empty 또는 us-gaap tag 없으면 `no_us_filings=1` 마킹,
+        `financials` 테이블에 row 생성 안 함
+      * companies 테이블 컬럼: `no_us_filings INTEGER` (위 schema 참조)
+      * Log: `"foreign filer X has no US filings, surfaced as qualitative"`
 - [ ] Rate limit: 0.11s per CIK, 800 × 0.11 = ~90 seconds.
 
 ### 4D — Coverage report
@@ -587,6 +600,9 @@ revisit weights in light of richer metrics.
   - **Sector Deep Dive** — per Tier 1, charts: revenue mix, growth, FCF,
         Rule of 40, score decomposition.
   - **Company Drill-Down** — pick a CIK, see all metrics + 4-yr trend.
+  - **Foreign Bellwethers** — `no_us_filings=1` companies as a
+        qualitative table (ticker, name, sector, mcap). 점수 X, 정보 O.
+        본 분석에서 제외된 이유 1줄 설명 (D5b 정책 링크).
   - **Methodology** — universe rules, taxonomy, score formulas, data
         caveats.
 

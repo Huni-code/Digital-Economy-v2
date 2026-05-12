@@ -17,6 +17,32 @@
 - Rationale: avoid premature exclusion.
 - Reversal cost: low.
 
+### D5b — Foreign filer surfacing (2026-05-12, Wave 1 발견)
+- Date: 2026-05-12
+- Context: Wave 1 (IGV/SOXX)에서 8개 foreign ADR 추가 (TSM, ASML,
+  ARM, NXPI, ASX, NVMI, STM, UMC). 원 D5 정책 ("auto-filter via
+  SEC XBRL absence") 적용 시 semi sector 분석에서 시장 핵심 4사
+  (TSM, ASML, NXPI, ARM) 빠짐 → 분석 narrative 구멍.
+- Rule:
+  * Universe에 foreign ADR keep, `foreign_filer=1` 플래그
+  * Phase 4 fetch: SEC XBRL Company Facts 시도
+    - 성공 시 (ARM 등 10-K 제출 회사): 점수 계산 포함
+    - 실패 시 (TSMC 등 20-F만): `no_us_filings=1`, financials NULL
+  * 점수 계산: financials NOT NULL 회사만 (D5 정신 유지, 데이터
+    일관성 보존)
+  * Dashboard: "Foreign tech bellwethers" 섹션에 `no_us_filings=1`
+    회사들 qualitative 노출 (ticker, name, mcap, sector)
+- Rationale:
+  * D5의 "U.S.-listed 분석"이라는 원칙은 점수 계산 단계에서 유지
+  * 분석 narrative 구멍은 qualitative surface로 메움
+  * ARM처럼 직접 10-K 제출하는 ADR은 자동으로 점수 포함
+  * +1h 작업, ROI 높음
+- Rejected: 20-F + ifrs-full XBRL parsing (옵션 B)
+  * +2d 작업 비용, 7개 회사 위해 과잉
+  * IFRS vs GAAP 회계 기준 차이로 tier 2 평균 노이즈 증가 위험
+  * v3 idea로 백로그
+- Reversal cost: low — `foreign_filer` 컬럼만 ignore하면 D5 원안 복귀.
+
 ### D-LLM — No LLM classification in Phase 3
 - Date: 2026-05-07
 - Rule: Phase 3C uses SIC + GICS rule-based mapping + manual overrides.
