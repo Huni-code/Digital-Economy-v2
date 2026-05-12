@@ -42,6 +42,10 @@
   * IFRS vs GAAP 회계 기준 차이로 tier 2 평균 노이즈 증가 위험
   * v3 idea로 백로그
 - Reversal cost: low — `foreign_filer` 컬럼만 ignore하면 D5 원안 복귀.
+- **Validation (2026-05-12, SKYY Wave 2):** 4 net-new foreign filers
+  surfaced (SHOP / WIX / SAP / OTEX). Cloud sector analysis directly
+  impacted (these companies would have been silently dropped under
+  D5 original). Policy validated.
 
 ### D-ETF-Skip — ARKK fetcher 스킵 (DEFERRED, 2026-05-12)
 - Status: **temporary skip**, revisit after Wave 2 complete
@@ -56,13 +60,17 @@
   B) Playwright headless browser (+100 lines, brittle 의존성)
   C) 3rd-party (ETFdb/yfinance, 1-7d lag)
   D) Permanent exclude
-- Decision: **A**. Wave 2 나머지 4개 (XLK/WCLD/SKYY/VGT) 끝낸 후
-  universe coverage 정량 확인하고 B/C/D 중 선택.
-- Re-decision trigger: Wave 2 완료 시점
+- Decision: **A**. Wave 2 나머지 4개 (XLK/WCLD/SKYY/VGT) + Wave 3
+  (Amplify, Global X) 끝낸 후 universe coverage 정량 확인하고 B/C/D
+  중 선택.
+- Re-decision trigger: **Wave 3 완료 시점** (Amplify/Global X overlap
+  with ARKK quantified)
 - Rationale:
   - ARKK actively managed (D-Universe ARKK caveat 참고), 우선순위 낮음.
   - 1개 ETF 위해 Playwright 의존성 도입은 senior project ROI 나쁨.
   - 다른 4개가 더 큰 unique ticker 기여 예상 (각 50-150 holdings).
+  - ARKK loss는 다른 thematic ETF가 cover하는 부분 빼고 봐야 정확.
+    Wave 3 (Amplify / Global X)까지 끝난 후 overlap 분석 후 결정.
 - Reversal cost: low (옵션 B/C 추후 추가 가능, 패턴은 1B 스크립트
   registry 구조 그대로 확장).
 
