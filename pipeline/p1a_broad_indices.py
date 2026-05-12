@@ -11,17 +11,22 @@ Outputs
   data/universe/{etf}_holdings_YYYYMMDD.csv      raw, gitignored
   data/universe/broad_indices_combined.csv       normalized, committed
 
-Combined-CSV schema
-  ticker                stock ticker (uppercase, trimmed)
-  name                  iShares-reported security name
-  sector_ishares        GICS sector label as iShares writes it
-  etf_market_value_usd  iShares' position size in USD = ETF AUM × weight%.
-                        ⚠ NOT the company's own market cap. Real
-                        market_cap_usd is fetched in Phase 2A via yfinance.
-  weight_pct            weight in source ETF (%)
-  source_index          'IWV' | 'IJH' | 'IJR'
-  data_as_of            'Fund Holdings as of' date from iShares header
-                        (YYYY-MM-DD); falls back to download date.
+Combined-CSV schema (same shape as 1B output for downstream union)
+  ticker                  stock ticker (uppercase, trimmed)
+  name                    iShares-reported security name
+  sector_ishares          GICS sector label as iShares writes it
+  etf_market_value_usd    iShares' position size in USD = ETF AUM × weight%.
+                          ⚠ NOT the company's own market cap. Real
+                          market_cap_usd is fetched in Phase 2A via yfinance.
+  weight_pct              weight in source ETF (%)
+  source_index            'IWV' | 'IJH' | 'IJR'
+  classification_raw      Sub-industry text from issuers that ship it
+                          (First Trust). Always NULL here — iShares broad
+                          indices only carry GICS sector.
+  source_classification   Issuer label for the classification_raw value,
+                          e.g. 'First Trust'. NULL here.
+  data_as_of              'Fund Holdings as of' date from iShares header
+                          (YYYY-MM-DD); falls back to download date.
 
 Same ticker can appear under multiple source_index values (long format).
 Phase 1D dedupes after combining with 1B thematic ETFs.
@@ -41,6 +46,8 @@ from pathlib import Path
 
 import pandas as pd
 import requests
+
+from _helpers import normalize_currency, normalize_weight_pct
 
 DATA_DIR = Path(__file__).parent.parent / "data" / "universe"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -167,18 +174,23 @@ def parse(csv_text: str, source: str, data_as_of: str) -> pd.DataFrame:
         "ticker": df["Ticker"].astype(str).str.strip().str.upper(),
         "name": df["Name"].astype(str).str.strip(),
         "sector_ishares": df["Sector"].astype(str).str.strip(),
-        "etf_market_value_usd": pd.to_numeric(
-            df[mv_col].astype(str).str.replace(r"[$,]", "", regex=True),
-            errors="coerce",
-        ) if mv_col else pd.NA,
-        "weight_pct": pd.to_numeric(
-            df[w_col].astype(str).str.replace("%", "").str.strip(),
-            errors="coerce",
-        ) if w_col else pd.NA,
+        "etf_market_value_usd": (
+            df[mv_col].apply(normalize_currency) if mv_col else pd.NA
+        ),
+        "weight_pct": (
+            df[w_col].apply(normalize_weight_pct) if w_col else pd.NA
+        ),
     })
     out["source_index"] = source
+    out["classification_raw"] = None
+    out["source_classification"] = None
     out["data_as_of"] = data_as_of
-    return out.reset_index(drop=True)
+    # Lock column order so 1A/1B outputs concat cleanly downstream.
+    return out[[
+        "ticker", "name", "sector_ishares", "etf_market_value_usd",
+        "weight_pct", "source_index", "classification_raw",
+        "source_classification", "data_as_of",
+    ]].reset_index(drop=True)
 
 
 def main():

@@ -58,6 +58,11 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
+> **Note on `lxml`:** required only by Phase 1B parsers that scrape HTML
+> (First Trust SKYY). CSV/xlsx-based issuers (iShares IWV/IJH/IJR/IGV/SOXX,
+> SSGA XLK) don't need it. If `pip install lxml` fails on your platform,
+> you can still run Phase 1A and the iShares/SSGA portions of Phase 1B.
+
 To rebuild the database from scratch (one-time, ~30 minutes including
 SEC API rate limits):
 

@@ -11,3 +11,7 @@ yfinance>=0.2.40
 
 # Excel / CSV reading (some ETF issuer CSVs are .xlsx)
 openpyxl>=3.1
+
+# HTML scraping (First Trust ships holdings as an HTML page; SSGA / iShares
+# don't need this).
+lxml>=5.0,<6

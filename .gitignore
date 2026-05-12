@@ -25,8 +25,14 @@ Thumbs.db
 data/cache/
 
 # Raw timestamped ETF / index downloads — re-derivable on demand.
-# Pattern matches: iwv_holdings_20260507.csv, arkk_holdings_20260507.csv, etc.
+# Pattern matches: iwv_holdings_20260507.csv, xlk_holdings_*.xlsx,
+# skyy_holdings_*.html, etc.
 data/universe/*_holdings_*.csv
+data/universe/*_holdings_*.xlsx
+data/universe/*_holdings_*.html
+
+# Recon scratch
+data/universe/_*_recon*
 
 # SQLite journal / WAL — never commit
 data/*.db-journal

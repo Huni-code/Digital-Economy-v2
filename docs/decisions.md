@@ -43,6 +43,29 @@
   * v3 idea로 백로그
 - Reversal cost: low — `foreign_filer` 컬럼만 ignore하면 D5 원안 복귀.
 
+### D-ETF-Skip — ARKK fetcher 스킵 (DEFERRED, 2026-05-12)
+- Status: **temporary skip**, revisit after Wave 2 complete
+- Context: ARKK 정찰 결과 정적 HTTP fetch 불가능.
+  - `ark-funds.com` legacy CSV URL → 404
+  - SPA로 전환, JS 렌더링 필요
+  - Wayback archive 없음 (`archived_snapshots: {}`)
+  - `/api/fund/holdings/1004` 존재하나 direct GET 시 SPA index.html
+    반환 (SPA-internal 인증/렌더 추정)
+- Options evaluated:
+  A) Skip + revisit (선택)
+  B) Playwright headless browser (+100 lines, brittle 의존성)
+  C) 3rd-party (ETFdb/yfinance, 1-7d lag)
+  D) Permanent exclude
+- Decision: **A**. Wave 2 나머지 4개 (XLK/WCLD/SKYY/VGT) 끝낸 후
+  universe coverage 정량 확인하고 B/C/D 중 선택.
+- Re-decision trigger: Wave 2 완료 시점
+- Rationale:
+  - ARKK actively managed (D-Universe ARKK caveat 참고), 우선순위 낮음.
+  - 1개 ETF 위해 Playwright 의존성 도입은 senior project ROI 나쁨.
+  - 다른 4개가 더 큰 unique ticker 기여 예상 (각 50-150 holdings).
+- Reversal cost: low (옵션 B/C 추후 추가 가능, 패턴은 1B 스크립트
+  registry 구조 그대로 확장).
+
 ### D-LLM — No LLM classification in Phase 3
 - Date: 2026-05-07
 - Rule: Phase 3C uses SIC + GICS rule-based mapping + manual overrides.
